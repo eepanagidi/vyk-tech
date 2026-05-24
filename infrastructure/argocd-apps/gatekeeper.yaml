@@ -51,6 +51,15 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+          # Apply the webhook configs client-side (the app default is
+          # ServerSideApply=true for the large CRDs). The SSA dry-run that
+          # computes sync status does NOT honor the `.webhooks` ignoreDifferences,
+          # so under SSA these objects sit permanently OutOfSync even though the
+          # real diff is empty. Client-side apply respects the ignore -> Synced.
+          validatingWebhookAnnotations:
+            argocd.argoproj.io/sync-options: ServerSideApply=false
+          mutatingWebhookAnnotations:
+            argocd.argoproj.io/sync-options: ServerSideApply=false
     # ConstraintTemplate only (Constraints live in the gatekeeper-policies app,
     # which syncs after the template's generated CRD exists).
     - repoURL: https://github.com/eepanagidi/vyk-tech.git
