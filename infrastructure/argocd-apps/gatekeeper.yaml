@@ -59,6 +59,22 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: gatekeeper-system
+  # Gatekeeper's webhooks use `matchConditions` (k8s 1.28+ admission feature).
+  # ArgoCD's structured-merge diff can't build a typed value for it ("field not
+  # declared in schema") and reports the app sync status as Unknown — purely a
+  # diff-rendering issue; the controller and policies are fully functional.
+  # Ignoring that field lets ArgoCD compute the diff and report Synced.
+  ignoreDifferences:
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      name: gatekeeper-mutating-webhook-configuration
+      jqPathExpressions:
+        - '.webhooks[]?.matchConditions'
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      name: gatekeeper-validating-webhook-configuration
+      jqPathExpressions:
+        - '.webhooks[]?.matchConditions'
   syncPolicy:
     automated:
       prune: false      # Never auto-prune policy resources

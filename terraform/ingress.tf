@@ -26,60 +26,50 @@ resource "helm_release" "ingress_nginx" {
   wait   = false
   atomic = false
 
-  set {
-    name  = "controller.service.type"
-    value = "LoadBalancer"
-  }
-  # Security: drop privileges
-  set {
-    name  = "controller.podSecurityContext.runAsNonRoot"
-    value = "true"
-  }
-  set {
-    name  = "controller.containerSecurityContext.allowPrivilegeEscalation"
-    value = "false"
-  }
-  set {
-    name  = "controller.containerSecurityContext.readOnlyRootFilesystem"
-    value = "false" # nginx-ingress writes to /tmp at runtime
-  }
-  # The admission webhook's pre-install Job is the most common cause of a slow/
-  # stuck ingress-nginx install on local k3d, and it isn't needed to serve
-  # Ingress traffic for this demo — disable it locally.
-  set {
-    name  = "controller.admissionWebhooks.enabled"
-    value = "false"
-  }
-  # Resources
-  set {
-    name  = "controller.resources.requests.cpu"
-    value = "100m"
-  }
-  set {
-    name  = "controller.resources.requests.memory"
-    value = "128Mi"
-  }
-  set {
-    name  = "controller.resources.limits.cpu"
-    value = "500m"
-  }
-  set {
-    name  = "controller.resources.limits.memory"
-    value = "512Mi"
-  }
-  # Common labels
-  set {
-    name  = "commonLabels.environment"
-    value = var.environment
-  }
-  set {
-    name  = "commonLabels.project"
-    value = var.project
-  }
-  set {
-    name  = "commonLabels.managed_by"
-    value = "terraform"
-  }
+  # A single YAML values block (not many `set` lines): overriding
+  # controller.containerSecurityContext piecemeal silently DROPS the chart's
+  # defaults (runAsUser: 101, capabilities), and a pod with runAsNonRoot: true
+  # but no NUMERIC runAsUser fails with CreateContainerConfigError ("image has
+  # non-numeric user www-data, cannot verify user is non-root"). Set the full
+  # securityContext explicitly so the controller can start AND stays hardened.
+  values = [yamlencode({
+    controller = {
+      service = { type = "LoadBalancer" }
+
+      podSecurityContext = {
+        runAsNonRoot   = true
+        runAsUser      = 101 # www-data (numeric — required when runAsNonRoot=true)
+        seccompProfile = { type = "RuntimeDefault" }
+      }
+
+      containerSecurityContext = {
+        runAsNonRoot             = true
+        runAsUser                = 101
+        allowPrivilegeEscalation = false
+        readOnlyRootFilesystem   = false # nginx writes to /tmp + /etc/nginx at runtime
+        capabilities = {
+          drop = ["ALL"]
+          add  = ["NET_BIND_SERVICE"] # bind :80/:443 as a non-root user
+        }
+      }
+
+      # The admission webhook's pre-install Job is the most common cause of a
+      # slow/stuck ingress-nginx install on local k3d, and it isn't needed to
+      # serve Ingress traffic for this demo — disable it locally.
+      admissionWebhooks = { enabled = false }
+
+      resources = {
+        requests = { cpu = "100m", memory = "128Mi" }
+        limits   = { cpu = "500m", memory = "512Mi" }
+      }
+    }
+
+    commonLabels = {
+      environment = var.environment
+      project     = var.project
+      managed_by  = "terraform"
+    }
+  })]
 
   depends_on = [kubernetes_namespace.ingress_nginx]
 }
