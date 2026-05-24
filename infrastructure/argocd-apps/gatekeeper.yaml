@@ -59,22 +59,24 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: gatekeeper-system
-  # Gatekeeper's webhooks use `matchConditions` (k8s 1.28+ admission feature).
-  # ArgoCD's structured-merge diff can't build a typed value for it ("field not
-  # declared in schema") and reports the app sync status as Unknown — purely a
-  # diff-rendering issue; the controller and policies are fully functional.
-  # Ignoring that field lets ArgoCD compute the diff and report Synced.
+  # The Gatekeeper controller mutates its own webhook configs at runtime: it
+  # injects the TLS caBundle (and matchConditions, a k8s 1.28+ field ArgoCD's
+  # schema doesn't know). Both show up as permanent drift, and with selfHeal on
+  # ArgoCD would fight the controller (revert caBundle -> controller re-injects).
+  # Ignore everything owned by the `gatekeeper` fieldManager so ArgoCD reports
+  # Synced and never reverts controller-managed fields. The policies themselves
+  # (gatekeeper-policies app) are still fully reconciled.
   ignoreDifferences:
     - group: admissionregistration.k8s.io
       kind: MutatingWebhookConfiguration
       name: gatekeeper-mutating-webhook-configuration
-      jqPathExpressions:
-        - '.webhooks[]?.matchConditions'
+      managedFieldsManagers:
+        - gatekeeper
     - group: admissionregistration.k8s.io
       kind: ValidatingWebhookConfiguration
       name: gatekeeper-validating-webhook-configuration
-      jqPathExpressions:
-        - '.webhooks[]?.matchConditions'
+      managedFieldsManagers:
+        - gatekeeper
   syncPolicy:
     automated:
       prune: false      # Never auto-prune policy resources
