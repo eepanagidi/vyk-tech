@@ -16,6 +16,11 @@ auth:
   existingSecret: mysql-credentials
   existingSecretPasswordKey: mysql-password
 
+# Schema bootstrap — TOP-LEVEL chart key (under `primary:` the chart ignores it,
+# so init.sql never runs). Runs scripts/init.sql via the mysql-initdb ConfigMap
+# on first DB initialization.
+initdbScriptsConfigMap: mysql-initdb
+
 primary:
   tolerations:
     - key: "role"
@@ -78,8 +83,6 @@ primary:
       "helm.sh/resource-policy": keep   # Helm will not delete this PVC on helm uninstall
       "argocd.argoproj.io/sync-options": "Delete=false"  # ArgoCD will not delete this PVC
       "vyking.io/deletion-protected": "true"
-
-  initdbScriptsConfigMap: mysql-initdb
 
   livenessProbe:
     enabled: true
