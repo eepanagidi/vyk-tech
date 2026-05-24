@@ -34,20 +34,20 @@ spec:
       rego: |
         package deletionprotection
 
-        # Block DELETE on any resource carrying the protection annotation
+        # Block DELETE on any resource carrying the protection annotation.
+        # On a DELETE AdmissionReview the target object is in `oldObject`
+        # (`object` is null), and the GVK is in `review.kind` (the embedded
+        # object's own `kind`/`apiVersion` are not reliably populated).
         violation[{"msg": msg}] {
           input.review.operation == "DELETE"
-          annotation := input.review.object.metadata.annotations["vyking.io/deletion-protected"]
-          annotation == "true"
+          obj := input.review.oldObject
+          obj.metadata.annotations["vyking.io/deletion-protected"] == "true"
           # Allow if the operator has explicitly set the override annotation
-          not input.review.object.metadata.annotations["vyking.io/deletion-override"] == "true"
+          not obj.metadata.annotations["vyking.io/deletion-override"] == "true"
+          kind := input.review.kind.kind
+          name := obj.metadata.name
           msg := sprintf(
             "Resource %s/%s is deletion-protected. To override, first run:\n  kubectl annotate %s %s vyking.io/deletion-override=true --overwrite\nThen retry the delete. Remove the override annotation after.",
-            [
-              input.review.object.kind,
-              input.review.object.metadata.name,
-              lower(input.review.object.kind),
-              input.review.object.metadata.name,
-            ]
+            [kind, name, lower(kind), name]
           )
         }
