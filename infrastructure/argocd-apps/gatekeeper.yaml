@@ -59,31 +59,29 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: gatekeeper-system
-  # The Gatekeeper controller mutates its own webhook configs at runtime. Two
-  # distinct problems, two mechanisms — BOTH are required:
-  #   1. `matchConditions` (k8s 1.28+) isn't in ArgoCD's bundled schema, so the
-  #      structured-merge diff CRASHES building the typed value -> status Unknown.
-  #      A jqPathExpression ignore runs during normalization and avoids the crash.
-  #   2. The controller injects the TLS `caBundle`, which then drifts forever; with
-  #      selfHeal on, ArgoCD would fight the controller. managedFieldsManagers
-  #      ignores every field owned by the `gatekeeper` fieldManager (caBundle + any
-  #      other controller-patched field), so no whack-a-mole.
+  # The Gatekeeper controller mutates its own webhook configs at runtime, which
+  # breaks ArgoCD's diff two ways — both handled here with jqPathExpressions ONLY:
+  #   - `matchConditions` (k8s 1.28+) isn't in ArgoCD's bundled schema, so the
+  #     structured-merge diff crashes building the typed value -> status Unknown.
+  #   - the controller injects the TLS `caBundle`, which then drifts forever (with
+  #     selfHeal on, ArgoCD would fight the controller and revert it).
+  # NB: do NOT use managedFieldsManagers here — resolving field ownership forces
+  # the same typed/structured build, which re-triggers the matchConditions schema
+  # crash before jq normalization runs. jqPathExpressions avoid that build entirely.
   # The policies themselves (gatekeeper-policies app) are still fully reconciled.
   ignoreDifferences:
     - group: admissionregistration.k8s.io
       kind: MutatingWebhookConfiguration
       name: gatekeeper-mutating-webhook-configuration
-      managedFieldsManagers:
-        - gatekeeper
       jqPathExpressions:
         - '.webhooks[]?.matchConditions'
+        - '.webhooks[]?.clientConfig.caBundle'
     - group: admissionregistration.k8s.io
       kind: ValidatingWebhookConfiguration
       name: gatekeeper-validating-webhook-configuration
-      managedFieldsManagers:
-        - gatekeeper
       jqPathExpressions:
         - '.webhooks[]?.matchConditions'
+        - '.webhooks[]?.clientConfig.caBundle'
   syncPolicy:
     automated:
       prune: false      # Never auto-prune policy resources
