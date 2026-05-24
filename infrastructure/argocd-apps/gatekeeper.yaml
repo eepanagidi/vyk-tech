@@ -36,6 +36,11 @@ spec:
       helm:
         values: |
           replicas: 1                    # 1 replica for local; 3 for production
+          # Intercept DELETE admissions. Gatekeeper's webhook defaults to
+          # CREATE+UPDATE only; without this the DeletionProtection policy (which
+          # fires on operation==DELETE) would never trigger — the whole point of
+          # the policy is to guard deletes.
+          enableDeleteOperations: true
           resources:
             requests:
               cpu: 100m

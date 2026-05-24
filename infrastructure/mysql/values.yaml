@@ -21,6 +21,12 @@ auth:
 # on first DB initialization.
 initdbScriptsConfigMap: mysql-initdb
 
+# Mark every chart resource (esp. the StatefulSet) deletion-protected so the
+# Gatekeeper protect-statefulsets constraint actually matches it. The PVC and
+# Secret are annotated elsewhere; the StatefulSet object only gets it here.
+commonAnnotations:
+  vyking.io/deletion-protected: "true"
+
 primary:
   tolerations:
     - key: "role"
