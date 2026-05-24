@@ -8,10 +8,11 @@ name: Integration Tests
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    branches: [master]
   workflow_dispatch:   # Run manually from GitHub UI
+  # No pull_request trigger: this is a GitOps e2e — ArgoCD fetches the branch from
+  # the remote, and a PR "merge ref" isn't a fetchable branch. Runs on push to
+  # master (or manually) where github.ref_name is a real branch.
 
 jobs:
   integration:
@@ -44,14 +45,13 @@ jobs:
           terraform_version: "1.8.5"
 
       # ── Build real images ────────────────────
+      # Tag 0.1.0 to match applications/values.yaml (image.tag) so the rendered
+      # Deployments pull exactly what we import — :test would ImagePullBackOff.
       - name: Build backend image
-        run: |
-          docker build -t vyking-backend:test backend/
-          # Import into k3d after cluster is created
+        run: docker build -t vyking-backend:0.1.0 backend/
 
       - name: Build frontend image
-        run: |
-          docker build -t vyking-frontend:test frontend/
+        run: docker build -t vyking-frontend:0.1.0 frontend/
 
       # ── Cluster ──────────────────────────────
       - name: Create k3d cluster
@@ -59,8 +59,8 @@ jobs:
 
       - name: Import images into k3d
         run: |
-          k3d image import vyking-backend:test  -c vyking-cluster
-          k3d image import vyking-frontend:test -c vyking-cluster
+          k3d image import vyking-backend:0.1.0  -c vyking-cluster
+          k3d image import vyking-frontend:0.1.0 -c vyking-cluster
 
       - name: Verify cluster nodes
         run: |
@@ -97,15 +97,24 @@ jobs:
             --from-file=init.sql=scripts/init.sql
 
       # ── Terraform ────────────────────────────
+      # init.sh injects THIS repo's URL + branch into the ArgoCD child apps so
+      # ArgoCD fetches the same code under test. environment=local matches the
+      # child apps' (intentionally local-pinned) AppProject references.
+      - name: Inject repo URL + branch
+        run: ./scripts/init.sh "https://github.com/${{ github.repository }}" "${{ github.ref_name }}"
+
       - name: Terraform init
         run: terraform -chdir=terraform init -backend=false
 
       - name: Terraform apply
+        env:
+          # ArgoCD (in-cluster) needs a credential to fetch the private repo; the
+          # ephemeral Actions token works for the lifetime of the job.
+          TF_VAR_github_token: ${{ secrets.GITHUB_TOKEN }}
+          TF_VAR_git_username: x-access-token
         run: |
           terraform -chdir=terraform apply -auto-approve \
-            -var="git_repo_url=https://github.com/${{ github.repository }}" \
-            -var="git_repo_revision=${{ github.ref_name }}" \
-            -var="environment=ci" \
+            -var="environment=local" \
             -var="kube_context=k3d-vyking-cluster"
 
       # ── ArgoCD ───────────────────────────────
@@ -138,7 +147,7 @@ jobs:
             --insecure
 
           # Wait up to 10 min for both parent apps to sync
-          for app in infrastructure applications; do
+          for app in infrastructure-local applications-local; do
             echo "Waiting for ArgoCD app: $app"
             argocd app wait "$app" \
               --health \
@@ -167,7 +176,7 @@ jobs:
 
       - name: Verify deployments are running
         run: |
-          for deploy in frontend backend; do
+          for deploy in frontend-local backend-local; do
             kubectl rollout status deployment/$deploy -n applications --timeout=120s
             echo "✓ $deploy deployment ready"
           done
@@ -176,7 +185,7 @@ jobs:
 
       - name: Verify probes are configured on all containers
         run: |
-          for deploy in frontend backend; do
+          for deploy in frontend-local backend-local; do
             LIVENESS=$(kubectl get deployment/$deploy -n applications \
               -o jsonpath='{.spec.template.spec.containers[0].livenessProbe}')
             READINESS=$(kubectl get deployment/$deploy -n applications \
@@ -188,7 +197,7 @@ jobs:
 
       - name: Verify resource limits are set
         run: |
-          for deploy in frontend backend; do
+          for deploy in frontend-local backend-local; do
             LIMITS=$(kubectl get deployment/$deploy -n applications \
               -o jsonpath='{.spec.template.spec.containers[0].resources.limits}')
             [ -n "$LIMITS" ] || (echo "ERROR: $deploy missing resource limits" && exit 1)
@@ -227,7 +236,7 @@ jobs:
       # ── Backend API via port-forward ──────────
       - name: Test backend API endpoints
         run: |
-          kubectl port-forward svc/backend -n applications 8081:80 &
+          kubectl port-forward svc/backend-local -n applications 8081:80 &
           sleep 5
 
           # Health check

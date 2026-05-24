@@ -24,9 +24,17 @@ sedi() {
 }
 
 echo "→ Injecting repo URL '${REPO_URL}' (branch '${BRANCH}') into ArgoCD child apps ..."
+# Idempotent: works whether the manifests still hold the GIT_REPO_URL /
+# 'targetRevision: main' template placeholders OR were already injected with real
+# values (so re-running on a different repo/branch is safe). Only github.com git
+# URLs and branch-like revisions are rewritten — Helm chart repos
+# (…github.io, charts.bitnami.com) and pinned chart versions like "3.16.3" are
+# left untouched (those start with a quote/digit, not a letter).
 while IFS= read -r -d '' f; do
   sedi "s|GIT_REPO_URL|${REPO_URL}|g" "$f"
+  sedi "s|repoURL: https://github\.com/[^[:space:]\"']*|repoURL: ${REPO_URL}|g" "$f"
   sedi "s|targetRevision: main|targetRevision: ${BRANCH}|g" "$f"
+  sedi "s|targetRevision: [A-Za-z][A-Za-z0-9._/-]*|targetRevision: ${BRANCH}|g" "$f"
 done < <(find infrastructure/argocd-apps -name '*.yaml' -print0)
 
 echo "→ Writing terraform/terraform.tfvars ..."

@@ -99,11 +99,16 @@ print(count)")
   ok "Secrets created"
 
   header "Terraform apply"
+  # git_repo_url comes from terraform/terraform.tfvars, written by init.sh — the
+  # AppProject sourceRepos + ArgoCD repo credential must match the real repo, so
+  # a placeholder here would leave every child app blocked by its project.
+  if [ ! -f terraform/terraform.tfvars ]; then
+    fail "terraform/terraform.tfvars missing — run ./scripts/init.sh <repo-url> <branch> first"
+    return 1
+  fi
   cd terraform
   terraform init -backend=false -no-color 2>&1 | tail -2
-  terraform apply -auto-approve -no-color \
-    -var="git_repo_url=https://github.com/YOUR_USERNAME/vyking-devops" \
-    -var="environment=local" 2>&1 | tail -10
+  terraform apply -auto-approve -no-color -var="environment=local" 2>&1 | tail -10
   cd ..
   ok "Terraform apply complete"
 
