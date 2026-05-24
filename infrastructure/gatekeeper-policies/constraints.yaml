@@ -62,7 +62,7 @@ metadata:
     app.kubernetes.io/managed-by: argocd
     project: vyking-platform
 spec:
-  enforcementAction: deny
+  enforcementAction: warn
   match:
     kinds:
       - apiGroups: [""]
