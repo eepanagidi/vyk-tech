@@ -1,0 +1,50 @@
+# ──────────────────────────────────────────────
+# Child ArgoCD Application: Gatekeeper policies (Constraints)
+#
+# Split from the gatekeeper app on purpose. A Constraint (kind DeletionProtection)
+# requires the CRD that Gatekeeper GENERATES from the ConstraintTemplate at
+# runtime. Applying both in one sync deadlocks: the Constraint is "invalid" until
+# the CRD exists, which fails the whole sync — so the controller never installs.
+#
+# sync-wave "1": runs after the gatekeeper controller + ConstraintTemplate
+# (wave 0) are healthy, so the DeletionProtection CRD already exists. Retry +
+# SkipDryRunOnMissingResource cover any residual timing gap.
+# ──────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gatekeeper-policies
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/part-of: infrastructure
+    app.kubernetes.io/component: policy
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/eepanagidi/vyk-tech.git
+    targetRevision: platform
+    path: infrastructure/gatekeeper-policies
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gatekeeper-system
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

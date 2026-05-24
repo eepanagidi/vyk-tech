@@ -68,3 +68,21 @@ variable "enable_protection" {
   # Validation: production must always have protection unless explicitly bypassed
   # The OPA policy also enforces this as a second line of defence
 }
+
+variable "github_token" {
+  description = <<-EOT
+    GitHub PAT (fine-grained, Contents: Read-only) used by ArgoCD to pull a
+    PRIVATE Git repo. Provide it out-of-band — e.g. terraform/secret.auto.tfvars
+    (git-ignored) or `export TF_VAR_github_token=...`. Leave empty for a public
+    repo (ArgoCD then syncs anonymously).
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "git_username" {
+  description = "Username paired with github_token for the ArgoCD repo credential (your GitHub username; any value works with a PAT)."
+  type        = string
+  default     = "git"
+}

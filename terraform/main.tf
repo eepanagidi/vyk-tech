@@ -31,39 +31,11 @@ resource "kubernetes_namespace" "argocd" {
   }
 }
 
-resource "kubernetes_namespace" "infrastructure" {
-  metadata {
-    name = "infrastructure"
-    labels = merge(local.common_labels, {
-      "app.kubernetes.io/name"             = "${local.name_prefix}-infrastructure"
-      "app.kubernetes.io/component"        = "data"
-      "pod-security.kubernetes.io/enforce" = "baseline"
-    })
-    annotations = {
-      "vyking.io/deletion-protected" = tostring(local.enable_protection && local.is_protected)
-    }
-  }
-  lifecycle {
-    ignore_changes = [metadata[0].labels["kubectl.kubernetes.io/last-applied-configuration"]]
-  }
-}
-
-resource "kubernetes_namespace" "applications" {
-  metadata {
-    name = "applications"
-    labels = merge(local.common_labels, {
-      "app.kubernetes.io/name"             = "${local.name_prefix}-applications"
-      "app.kubernetes.io/component"        = "workloads"
-      "pod-security.kubernetes.io/enforce" = "baseline"
-    })
-    annotations = {
-      "vyking.io/deletion-protected" = tostring(local.enable_protection && local.is_protected)
-    }
-  }
-  lifecycle {
-    ignore_changes = [metadata[0].labels["kubectl.kubernetes.io/last-applied-configuration"]]
-  }
-}
+# The 'infrastructure' and 'applications' namespaces are created by
+# scripts/create-secrets.sh (before `terraform apply`, so the MySQL Secret and
+# initdb ConfigMap can be placed in them) and are also covered by each ArgoCD
+# app's CreateNamespace=true sync option. Terraform deliberately does NOT manage
+# them — doing so collided with the pre-created namespaces ("already exists").
 
 # ── ArgoCD via Helm ───────────────────────────
 # Name includes environment: vyking-platform-production-argocd
@@ -103,6 +75,30 @@ resource "helm_release" "argocd" {
   values = [file("${path.module}/argocd-values.yaml")]
 
   depends_on = [kubernetes_namespace.argocd]
+}
+
+# ── ArgoCD repository credential (PRIVATE repo only) ──
+# ArgoCD watches Secrets labeled argocd.argoproj.io/secret-type=repository and
+# uses them to authenticate git fetches. Created ONLY when var.github_token is
+# supplied out-of-band (terraform/secret.auto.tfvars or TF_VAR_github_token).
+# A public repo needs none of this.
+resource "kubernetes_secret" "argocd_repo" {
+  count = var.github_token != "" ? 1 : 0
+
+  metadata {
+    name      = "repo-vyk-tech"
+    namespace = kubernetes_namespace.argocd.metadata[0].name
+    labels = {
+      "argocd.argoproj.io/secret-type" = "repository"
+    }
+  }
+  data = {
+    type     = "git"
+    url      = var.git_repo_url
+    username = var.git_username
+    password = var.github_token
+  }
+  depends_on = [helm_release.argocd]
 }
 
 # ── Ingress NGINX is defined in ingress.tf ────

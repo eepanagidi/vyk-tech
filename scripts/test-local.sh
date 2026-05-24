@@ -112,10 +112,10 @@ print(count)")
   ok "ArgoCD server running"
 
   header "Wait for workloads"
-  kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=vyking-apps-backend \
+  kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=backend-local \
     -n applications --timeout=300s 2>/dev/null \
     && ok "Backend pods ready" || fail "Backend pods not ready"
-  kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=vyking-apps-frontend \
+  kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=frontend-local \
     -n applications --timeout=120s 2>/dev/null \
     && ok "Frontend pods ready" || fail "Frontend pods not ready"
   kubectl wait --for=condition=Ready pod/mysql-0 -n infrastructure --timeout=180s \
@@ -134,14 +134,14 @@ print(sum(1 for p in pods if p.get('spec',{}).get('nodeName')=='$CONTROL'))")
     || fail "Found $MISPLACED pods on control-plane"
 
   header "Resource limits"
-  for deploy in backend frontend; do
+  for deploy in backend-local frontend-local; do
     LIMITS=$(kubectl get deployment/$deploy -n applications \
       -o jsonpath='{.spec.template.spec.containers[0].resources.limits}')
     [ -n "$LIMITS" ] && ok "$deploy has resource limits" || fail "$deploy missing limits"
   done
 
   header "Probes"
-  for deploy in backend frontend; do
+  for deploy in backend-local frontend-local; do
     L=$(kubectl get deployment/$deploy -n applications \
       -o jsonpath='{.spec.template.spec.containers[0].livenessProbe}')
     R=$(kubectl get deployment/$deploy -n applications \
@@ -152,7 +152,7 @@ print(sum(1 for p in pods if p.get('spec',{}).get('nodeName')=='$CONTROL'))")
   done
 
   header "Backend API (port-forward)"
-  kubectl port-forward svc/backend -n applications 8082:80 &
+  kubectl port-forward svc/backend-local -n applications 8082:80 &
   PF_PID=$!
   sleep 5
 

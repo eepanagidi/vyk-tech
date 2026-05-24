@@ -20,9 +20,11 @@ resource "helm_release" "ingress_nginx" {
   version    = "4.10.1" # Pinned
   namespace  = kubernetes_namespace.ingress_nginx.metadata[0].name
 
-  wait    = true
-  timeout = 300
-  atomic  = true
+  # Non-blocking: on local k3d the controller can take a while to pull/settle,
+  # and it is NOT on the critical path (the app is verified via port-forward).
+  # k8s converges it asynchronously — check with `kubectl -n ingress-nginx get po`.
+  wait   = false
+  atomic = false
 
   set {
     name  = "controller.service.type"
@@ -40,6 +42,13 @@ resource "helm_release" "ingress_nginx" {
   set {
     name  = "controller.containerSecurityContext.readOnlyRootFilesystem"
     value = "false" # nginx-ingress writes to /tmp at runtime
+  }
+  # The admission webhook's pre-install Job is the most common cause of a slow/
+  # stuck ingress-nginx install on local k3d, and it isn't needed to serve
+  # Ingress traffic for this demo — disable it locally.
+  set {
+    name  = "controller.admissionWebhooks.enabled"
+    value = "false"
   }
   # Resources
   set {

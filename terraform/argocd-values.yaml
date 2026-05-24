@@ -16,7 +16,7 @@ configs:
 
   cm:
     # Health check for child Applications (App of Apps)
-    resource.customizations.health.argoproj.io/Application: |
+    resource.customizations.health.argoproj.io_Application: |
       hs = {}
       hs.status = "Progressing"
       hs.message = ""

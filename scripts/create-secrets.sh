@@ -10,6 +10,9 @@ MODE="${1:-auto}"
 echo "→ Creating namespaces..."
 kubectl create namespace infrastructure --dry-run=client -o yaml | kubectl apply -f -
 kubectl create namespace applications --dry-run=client -o yaml | kubectl apply -f -
+# Pod Security Admission — baseline (Terraform no longer manages these namespaces)
+kubectl label namespace infrastructure applications \
+  pod-security.kubernetes.io/enforce=baseline --overwrite >/dev/null
 
 # ── Apply MySQL credentials ────────────────────
 if [[ "$MODE" == "--sops" ]] || \

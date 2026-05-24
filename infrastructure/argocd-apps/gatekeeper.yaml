@@ -23,7 +23,9 @@ metadata:
     project: vyking-platform
     owner: platform-team
   annotations:
-    argocd.argoproj.io/sync-wave: "-1"   # Deploy before MySQL and backup
+    # Wave 0 alongside MySQL/backup so a slow/unhealthy policy controller never
+    # blocks the database. Constraints are applied later by gatekeeper-policies.
+    argocd.argoproj.io/sync-wave: "0"
     vyking.io/deletion-protected: "true"
 spec:
   project: default # operator install needs broad cluster RBAC (CRDs, webhooks, ClusterRoles)
@@ -49,7 +51,8 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-    # ConstraintTemplate + Constraints from our repo
+    # ConstraintTemplate only (Constraints live in the gatekeeper-policies app,
+    # which syncs after the template's generated CRD exists).
     - repoURL: https://github.com/eepanagidi/vyk-tech.git
       targetRevision: platform
       path: infrastructure/gatekeeper

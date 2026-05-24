@@ -2,6 +2,8 @@
 terraform/.terraform/
 terraform/.terraform.lock.hcl
 terraform/terraform.tfvars
+# secret.auto.tfvars holds the ArgoCD repo PAT — never commit (no inline comments in .gitignore!)
+terraform/*.auto.tfvars
 terraform/*.tfstate
 terraform/*.tfstate.backup
 terraform/crash.log
