@@ -154,6 +154,7 @@ resource "kubectl_manifest" "argocd_project_infrastructure" {
         { group = "rbac.authorization.k8s.io", kind = "Role" },
         { group = "rbac.authorization.k8s.io", kind = "RoleBinding" },
         { group = "networking.k8s.io", kind = "NetworkPolicy" },
+        { group = "policy", kind = "PodDisruptionBudget" }, # Bitnami MySQL chart creates one
         # App-of-Apps: parent infrastructure app creates child Applications
         { group = "argoproj.io", kind = "Application" },
         # Gatekeeper policy resources

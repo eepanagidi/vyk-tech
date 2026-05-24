@@ -121,6 +121,14 @@ primary:
     character-set-server=UTF8
     slow_query_log=1
     long_query_time=2.0
+    # Client tools (mysqladmin/mysql, used by the readiness/startup probes) must
+    # use the same non-default socket as the server. Without these sections the
+    # probes connect to /tmp/mysql.sock and fail, so the pod never goes Ready.
+    [client]
+    port=3306
+    socket=/opt/bitnami/mysql/tmp/mysql.sock
+    [mysql]
+    no-auto-rehash
 
 serviceAccount:
   create: false

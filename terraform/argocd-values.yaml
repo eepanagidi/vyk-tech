@@ -90,10 +90,10 @@ repoServer:
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
     limits:
-      cpu: 500m
-      memory: 512Mi
+      cpu: 1000m
+      memory: 2Gi # Bitnami MySQL chart rendering is memory-heavy; 512Mi/1Gi both OOMed under concurrent refreshes
   containerSecurityContext:
     allowPrivilegeEscalation: false
     readOnlyRootFilesystem: true
