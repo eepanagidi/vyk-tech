@@ -1,0 +1,79 @@
+# ──────────────────────────────────────────────
+# Child ArgoCD Application: MySQL
+#
+# Database protection strategy (4 layers):
+#
+#   1. ArgoCD: prune=false — ArgoCD will NEVER delete MySQL resources,
+#              even if they're removed from Git
+#
+#   2. ArgoCD: sync-options on PVC — Delete=false prevents the data
+#              volume from being touched during sync
+#
+#   3. Bitnami chart: persistenceReclaimPolicy=Retain — even if the PVC
+#              object is deleted, the underlying PersistentVolume
+#              and its data survive
+#
+#   4. OPA policy: blocks DELETE on resources annotated
+#              vyking.io/deletion-protected=true
+# ──────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mysql
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/part-of: infrastructure
+    app.kubernetes.io/component: database
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"   # Deploys after Gatekeeper (wave -1)
+    vyking.io/deletion-protected: "true"
+    vyking.io/contains-stateful-data: "true"
+spec:
+  project: infrastructure-local
+  sources:
+    - repoURL: https://charts.bitnami.com/bitnami
+      chart: mysql
+      targetRevision: "11.1.7"
+      helm:
+        valueFiles:
+          - $values/infrastructure/mysql/values.yaml
+    - repoURL: https://github.com/eepanagidi/vyk-tech.git
+      targetRevision: platform
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: infrastructure
+  syncPolicy:
+    automated:
+      prune: false      # ← NEVER auto-delete MySQL resources
+      selfHeal: true    #   but do auto-heal config drift
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      # These three protect the data volume specifically:
+      - Delete=false                    # ArgoCD will not delete any resource in this app
+      - PrunePropagationPolicy=orphan   # If prune ever runs, orphan instead of delete
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+  # Ignore drift on the PVC — storage can be resized externally
+  # without ArgoCD trying to revert it
+  ignoreDifferences:
+    - group: ""
+      kind: PersistentVolumeClaim
+      jsonPointers:
+        - /spec/resources/requests/storage
+    - group: apps
+      kind: StatefulSet
+      jsonPointers:
+        - /spec/volumeClaimTemplates

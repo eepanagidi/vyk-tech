@@ -1,0 +1,64 @@
+# ──────────────────────────────────────────────
+# MySQL ServiceAccount + least-privilege RBAC (infrastructure namespace)
+#
+# The Bitnami MySQL chart is configured with serviceAccount.create=false and
+# serviceAccount.name=mysql, so this SA MUST exist before the StatefulSet pod
+# is scheduled. Created by the platform-base ArgoCD app (sync-wave -2).
+#
+# The Role grants read-only access to the credentials Secret + init ConfigMap
+# (least privilege). The pod sets automountServiceAccountToken=false, so this
+# is defence-in-depth rather than a runtime dependency.
+# ──────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mysql
+  namespace: infrastructure
+  labels:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/component: database
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mysql
+  namespace: infrastructure
+  labels:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/component: database
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["mysql-credentials"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["mysql-initdb"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mysql
+  namespace: infrastructure
+  labels:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/component: database
+    app.kubernetes.io/managed-by: argocd
+subjects:
+  - kind: ServiceAccount
+    name: mysql
+    namespace: infrastructure
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: mysql

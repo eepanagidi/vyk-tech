@@ -1,0 +1,37 @@
+# ──────────────────────────────────────────────
+# StorageClass: mysql-retain
+#
+# reclaimPolicy: Retain — when the PVC is deleted, the PV and its data are
+# NOT deleted; the PV moves to "Released" and the data survives. This is the
+# single most important data-protection setting and it survives BOTH
+# `terraform destroy` and `kubectl delete` (unlike Terraform prevent_destroy).
+#
+# Used by the MySQL data PVC (primary.persistence.storageClass) and the
+# backup PVC. Created by the platform-base ArgoCD app at sync-wave -2 so it
+# exists before MySQL/backup (wave 0) provision their volumes.
+#
+# Recovery after accidental PVC deletion:
+#   1. kubectl get pv                                  # find the Released PV
+#   2. kubectl patch pv <pv-name> -p '{"spec":{"claimRef": null}}'
+#   3. Re-create the PVC with volumeName: <pv-name>
+# ──────────────────────────────────────────────
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: mysql-retain
+  labels:
+    app.kubernetes.io/component: database
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+    vyking.io/deletion-protected: "true"
+  annotations:
+    vyking.io/deletion-protected: "true"
+    vyking.io/purpose: "MySQL data + backups — reclaimPolicy=Retain protects data on PVC deletion"
+# k3d default provisioner. In a cloud, swap for the CSI driver:
+#   AWS ebs.csi.aws.com · GCP pd.csi.storage.gke.io · Azure disk.csi.azure.com
+provisioner: rancher.io/local-path
+reclaimPolicy: Retain # ← THE KEY SETTING
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Vyking Platform</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { color: #1a1a2e; }
+    .form-row { display: flex; gap: .5rem; margin-bottom: 1rem; }
+    input { flex: 1; padding: .5rem; border: 1px solid #ccc; border-radius: 4px; }
+    button { padding: .5rem 1rem; background: #1a1a2e; color: #fff; border: none;
+             border-radius: 4px; cursor: pointer; }
+    button:hover { background: #16213e; }
+    ul { list-style: none; padding: 0; }
+    li { display: flex; justify-content: space-between; align-items: center;
+         padding: .6rem; border-bottom: 1px solid #eee; }
+    .del { background: #c0392b; padding: .3rem .6rem; font-size: .8rem; }
+    .status { font-size: .8rem; color: #666; margin-bottom: 1rem; }
+    .ok { color: green; } .err { color: red; }
+  </style>
+</head>
+<body>
+  <h1>Vyking Platform — Items</h1>
+  <div class="status" id="status">Checking backend…</div>
+
+  <div class="form-row">
+    <input id="nameInput" placeholder="Item name" />
+    <button onclick="createItem()">Add Item</button>
+  </div>
+
+  <ul id="list"></ul>
+
+  <script>
+    const API = '/api';
+
+    async function checkHealth() {
+      try {
+        const r = await fetch(`${API}/health`);
+        const d = await r.json();
+        document.getElementById('status').innerHTML =
+          `Backend: <span class="${d.status==='ok'?'ok':'err'}">${d.status}</span> | ` +
+          `DB: <span class="${d.database==='ok'?'ok':'err'}">${d.database}</span>`;
+      } catch(e) {
+        document.getElementById('status').innerHTML =
+          `<span class="err">Backend unreachable: ${e.message}</span>`;
+      }
+    }
+
+    async function loadItems() {
+      const r = await fetch(`${API}/items`);
+      const items = await r.json();
+      const ul = document.getElementById('list');
+      ul.innerHTML = (items||[]).map(i =>
+        `<li><span>#${i.id} — ${i.name}</span>
+         <button class="del" onclick="deleteItem(${i.id})">Delete</button></li>`
+      ).join('');
+    }
+
+    async function createItem() {
+      const name = document.getElementById('nameInput').value.trim();
+      if (!name) return;
+      await fetch(`${API}/items`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({name})
+      });
+      document.getElementById('nameInput').value = '';
+      loadItems();
+    }
+
+    async function deleteItem(id) {
+      await fetch(`${API}/items/${id}`, {method:'DELETE'});
+      loadItems();
+    }
+
+    checkHealth();
+    loadItems();
+    setInterval(checkHealth, 15000);
+  </script>
+</body>
+</html>

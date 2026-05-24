@@ -1,0 +1,21 @@
+{{- if .Values.backend.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vyking-apps.backend.name" . }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "vyking-apps.labels" . | nindent 4 }}
+    {{- include "vyking-apps.backend.selectorLabels" . | nindent 4 }}
+  annotations:
+    {{- include "vyking-apps.protectionAnnotations" . | nindent 4 }}
+spec:
+  type: {{ .Values.backend.service.type }}
+  ports:
+    - port: {{ .Values.backend.service.port }}
+      targetPort: {{ .Values.backend.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "vyking-apps.backend.selectorLabels" . | nindent 4 }}
+{{- end }}

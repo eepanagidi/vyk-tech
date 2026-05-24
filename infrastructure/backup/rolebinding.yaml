@@ -1,0 +1,20 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mysql-backup
+  namespace: infrastructure
+  labels:
+    app.kubernetes.io/name: mysql-backup
+    app.kubernetes.io/component: backup
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+subjects:
+  - kind: ServiceAccount
+    name: mysql-backup
+    namespace: infrastructure
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: mysql-backup

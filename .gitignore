@@ -1,0 +1,26 @@
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfvars
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/crash.log
+
+# OS
+.DS_Store
+*.swp
+
+# Pre-commit
+.pre-commit-cache/
+
+# Policy test outputs
+policy/*.json
+
+# SOPS — plaintext secrets must never be committed
+secrets/*.yaml
+!secrets/*.enc.yaml     # Encrypted files ARE safe to commit
+.destroy-audit.log
+
+# Job task brief & screenshots dropped into the working dir — not deliverables
+*.pdf
+*.webp

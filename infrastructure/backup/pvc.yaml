@@ -1,0 +1,33 @@
+# ──────────────────────────────────────────────
+# Backup storage PVC
+# Same protection stack as MySQL data PVC:
+#   - helm.sh/resource-policy: keep
+#   - argocd Delete=false
+#   - Retain StorageClass
+#   - deletion-protected annotation
+# ──────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-backup-storage
+  namespace: infrastructure
+  labels:
+    app.kubernetes.io/name: mysql-backup
+    app.kubernetes.io/component: backup
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+  annotations:
+    helm.sh/resource-policy: keep
+    argocd.argoproj.io/sync-options: Delete=false
+    vyking.io/deletion-protected: "true"
+    vyking.io/contains-stateful-data: "true"
+    vyking.io/purpose: "MySQL backup files — retained independently of MySQL PVC"
+spec:
+  storageClassName: mysql-retain
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

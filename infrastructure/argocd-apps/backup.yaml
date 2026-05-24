@@ -1,0 +1,30 @@
+# ──────────────────────────────────────────────
+# Child ArgoCD Application: Backup resources
+# Deploys: PVC + CronJob + RBAC for MySQL backups
+# ──────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: backup
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/part-of: infrastructure
+    app.kubernetes.io/component: backup
+spec:
+  project: infrastructure-local
+  source:
+    repoURL: https://github.com/eepanagidi/vyk-tech.git   # Replaced by scripts/init.sh
+    targetRevision: platform
+    path: infrastructure/backup
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: infrastructure
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

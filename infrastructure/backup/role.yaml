@@ -1,0 +1,19 @@
+# Minimal Role — mysql-backup SA can only GET the one secret it needs.
+# Cannot list, watch, or access any other secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mysql-backup
+  namespace: infrastructure
+  labels:
+    app.kubernetes.io/name: mysql-backup
+    app.kubernetes.io/component: backup
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["mysql-credentials"]
+    verbs: ["get"]

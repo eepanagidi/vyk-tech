@@ -1,0 +1,131 @@
+# ──────────────────────────────────────────────
+# Bitnami MySQL values
+# ──────────────────────────────────────────────
+
+image:
+  tag: "8.0.36"
+
+auth:
+  database: appdb
+  username: appuser
+  existingSecret: mysql-credentials
+  existingSecretPasswordKey: mysql-password
+
+primary:
+  tolerations:
+    - key: "role"
+      operator: "Equal"
+      value: "worker"
+      effect: "NoSchedule"
+  nodeSelector:
+    role: worker
+
+  podLabels:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/component: database
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+    vyking.io/deletion-protected: "true"
+    vyking.io/contains-stateful-data: "true"
+
+  podAnnotations:
+    vyking.io/deletion-protected: "true"
+    vyking.io/contains-stateful-data: "true"
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  podSecurityContext:
+    enabled: true
+    fsGroup: 1001
+    runAsUser: 1001
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    enabled: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    capabilities:
+      drop: ["ALL"]
+
+  persistence:
+    enabled: true
+    storageClass: mysql-retain   # Retain reclaimPolicy — created by the platform-base app
+    size: 5Gi
+    accessModes:
+      - ReadWriteOnce
+    # ── CRITICAL: Retain policy ────────────────
+    # If the PVC object is ever deleted (accidentally or otherwise),
+    # the underlying PersistentVolume is NOT deleted — it moves to
+    # "Released" state and the data survives.
+    # Recovery: create a new PVC referencing the old PV by claimRef.
+    # Default in most clusters is "Delete" which permanently destroys data.
+    annotations:
+      "helm.sh/resource-policy": keep   # Helm will not delete this PVC on helm uninstall
+      "argocd.argoproj.io/sync-options": "Delete=false"  # ArgoCD will not delete this PVC
+      "vyking.io/deletion-protected": "true"
+
+  initdbScriptsConfigMap: mysql-initdb
+
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+    successThreshold: 1
+
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 1
+    failureThreshold: 3
+    successThreshold: 1
+
+  startupProbe:
+    enabled: true
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 1
+    failureThreshold: 30
+
+  configuration: |-
+    [mysqld]
+    skip-name-resolve
+    explicit_defaults_for_timestamp
+    basedir=/opt/bitnami/mysql
+    plugin_dir=/opt/bitnami/mysql/lib/plugin
+    port=3306
+    socket=/opt/bitnami/mysql/tmp/mysql.sock
+    datadir=/bitnami/mysql/data
+    tmpdir=/opt/bitnami/mysql/tmp
+    max_allowed_packet=16M
+    bind-address=*
+    pid-file=/opt/bitnami/mysql/tmp/mysqld.pid
+    log-error=/opt/bitnami/mysql/logs/mysqld.log
+    character-set-server=UTF8
+    slow_query_log=1
+    long_query_time=2.0
+
+serviceAccount:
+  create: false
+  name: mysql
+  automountServiceAccountToken: false
+
+# ── StorageClass ───────────────────────────────
+# mysql-retain (reclaimPolicy: Retain) is created by the platform-base ArgoCD
+# app (infrastructure/base/storageclass.yaml) and selected above via
+# primary.persistence.storageClass.
+
+metrics:
+  enabled: false

@@ -1,0 +1,189 @@
+# ──────────────────────────────────────────────
+# Global settings
+# ──────────────────────────────────────────────
+global:
+  namespace: applications
+  imagePullPolicy: IfNotPresent
+  # Drives resource-name suffixes (backend-local, app-config-local, …).
+  # ArgoCD overrides this per environment via a Helm parameter.
+  environment: local
+
+  # Labels applied to all resources (matches OPA policy requirements)
+  commonLabels:
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+
+  # Tolerate the worker node taint applied in k3d-cluster.yaml
+  # Without this, pods would only schedule on the control-plane
+  tolerations:
+    - key: "role"
+      operator: "Equal"
+      value: "worker"
+      effect: "NoSchedule"
+
+  nodeSelector:
+    role: worker
+
+# ──────────────────────────────────────────────
+# Backend
+# ──────────────────────────────────────────────
+backend:
+  enabled: true
+
+  image:
+    repository: vyking-backend # built locally + k3d image import (scripts/build-images.sh)
+    tag: "0.1.0"
+
+  replicaCount: 2
+
+
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  # Rolling update: maxUnavailable=0 ensures zero downtime
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+  env:
+    MYSQL_HOST: "mysql.infrastructure.svc.cluster.local"
+    MYSQL_PORT: "3306"
+    MYSQL_DATABASE: "appdb"
+
+  probes:
+    liveness:
+      httpGet:
+        path: /healthz
+        port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+      successThreshold: 1
+    readiness:
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+      successThreshold: 1
+    startup:
+      httpGet:
+        path: /healthz
+        port: 8080
+      failureThreshold: 30
+      periodSeconds: 3
+
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: RuntimeDefault
+    capabilities:
+      drop: ["ALL"]
+
+# ──────────────────────────────────────────────
+# Frontend
+# ──────────────────────────────────────────────
+frontend:
+  enabled: true
+
+  image:
+    repository: vyking-frontend # built locally + k3d image import (scripts/build-images.sh)
+    tag: "0.1.0"
+
+  replicaCount: 2
+
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+  probes:
+    liveness:
+      httpGet:
+        path: /healthz
+        port: 8080
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+      successThreshold: 1
+    readiness:
+      httpGet:
+        path: /healthz
+        port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+      successThreshold: 1
+    startup:
+      httpGet:
+        path: /healthz
+        port: 8080
+      failureThreshold: 30
+      periodSeconds: 3
+
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    runAsGroup: 101
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    seccompProfile:
+      type: RuntimeDefault
+    capabilities:
+      drop: ["ALL"]
+
+# ──────────────────────────────────────────────
+# Shared config
+# ──────────────────────────────────────────────
+config:
+  backendUrl: "http://backend.applications.svc.cluster.local"
+  logLevel: "info"
+  environment: "local"

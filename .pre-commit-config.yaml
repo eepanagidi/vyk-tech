@@ -1,0 +1,103 @@
+# ──────────────────────────────────────────────
+# Pre-commit hooks
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+# ──────────────────────────────────────────────
+default_stages: [commit]
+fail_fast: false
+
+repos:
+  # ── General hygiene ────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: no-commit-to-branch
+        args: [--branch, main, --branch, master]
+
+  # ── Terraform fmt + validate ────────────────
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.92.1
+    hooks:
+      - id: terraform_fmt
+        args:
+          - --args=-recursive
+      - id: terraform_validate
+        args:
+          - --args=-no-color
+      - id: terraform_docs
+        args:
+          - --hook-config=--path-to-file=terraform/TERRAFORM.md
+          - --hook-config=--add-to-existing-file=true
+          - --hook-config=--create-file-if-not-exist=true
+      - id: terraform_tflint
+        args:
+          - --args=--config=__GIT_WORKING_DIR__/.tflint.hcl
+
+  # ── Checkov: IaC security scanning ─────────
+  - repo: https://github.com/bridgecrewio/checkov
+    rev: 3.2.119
+    hooks:
+      - id: checkov
+        name: checkov-terraform
+        args:
+          - --directory=terraform
+          - --config-file=.checkov.yaml
+          - --framework=terraform
+          - --quiet
+        pass_filenames: false
+      - id: checkov
+        name: checkov-kubernetes
+        args:
+          - --directory=infrastructure
+          - --config-file=.checkov.yaml
+          - --framework=kubernetes
+          - --quiet
+        pass_filenames: false
+      - id: checkov
+        name: checkov-helm
+        args:
+          - --directory=applications
+          - --config-file=.checkov.yaml
+          - --framework=helm
+          - --quiet
+        pass_filenames: false
+
+  # ── OPA/Conftest: policy enforcement ───────
+  - repo: https://github.com/open-policy-agent/conftest
+    rev: v0.55.0
+    hooks:
+      - id: conftest-test
+        name: opa-terraform
+        args:
+          - --policy=policy/
+          - --namespace=terraform
+          - terraform/
+        pass_filenames: false
+      - id: conftest-test
+        name: opa-kubernetes
+        args:
+          - --policy=policy/
+          - --namespace=kubernetes
+          - infrastructure/
+          - --all-namespaces
+        pass_filenames: false
+
+  # ── Helm lint ───────────────────────────────
+  - repo: https://github.com/gruntwork-io/pre-commit
+    rev: v0.1.23
+    hooks:
+      - id: helmlint
+
+  # ── Secret scanning ─────────────────────────
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks

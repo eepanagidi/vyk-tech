@@ -1,0 +1,328 @@
+# ──────────────────────────────────────────────
+# Integration test workflow
+# Runs a real k3d cluster on GitHub Actions,
+# deploys the full stack, and verifies every layer.
+# Triggered on: push to main, PRs, or manual dispatch
+# ──────────────────────────────────────────────
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:   # Run manually from GitHub UI
+
+jobs:
+  integration:
+    name: Full Stack Integration Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Tool setup ───────────────────────────
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | \
+            TAG=v5.6.3 bash
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: "v1.29.4"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.15.2"
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.5"
+
+      # ── Build real images ────────────────────
+      - name: Build backend image
+        run: |
+          docker build -t vyking-backend:test backend/
+          # Import into k3d after cluster is created
+
+      - name: Build frontend image
+        run: |
+          docker build -t vyking-frontend:test frontend/
+
+      # ── Cluster ──────────────────────────────
+      - name: Create k3d cluster
+        run: k3d cluster create --config k3d-cluster.yaml
+
+      - name: Import images into k3d
+        run: |
+          k3d image import vyking-backend:test  -c vyking-cluster
+          k3d image import vyking-frontend:test -c vyking-cluster
+
+      - name: Verify cluster nodes
+        run: |
+          kubectl wait --for=condition=Ready nodes --all --timeout=90s
+          kubectl get nodes -o wide
+
+      - name: Verify worker taints applied
+        run: |
+          TAINTED=$(kubectl get nodes -o json | \
+            jq '[.items[] | select(.spec.taints != null) |
+                 .spec.taints[] | select(.key=="role" and .value=="worker")] | length')
+          echo "Tainted worker nodes: $TAINTED"
+          [ "$TAINTED" -ge 2 ] || (echo "Expected 2+ tainted workers" && exit 1)
+
+      # ── Secrets ──────────────────────────────
+      - name: Create namespaces and secrets
+        run: |
+          # Use known test passwords (not random — for reproducibility in CI)
+          kubectl create namespace infrastructure
+          kubectl create namespace applications
+
+          kubectl create secret generic mysql-credentials \
+            --namespace infrastructure \
+            --from-literal=mysql-root-password=testroot123 \
+            --from-literal=mysql-password=testpass123 \
+            --from-literal=mysql-replication-password=testrep123
+
+          kubectl create secret generic mysql-app-credentials \
+            --namespace applications \
+            --from-literal=mysql-password=testpass123
+
+          kubectl create configmap mysql-initdb \
+            --namespace infrastructure \
+            --from-file=init.sql=scripts/init.sql
+
+      # ── Terraform ────────────────────────────
+      - name: Terraform init
+        run: terraform -chdir=terraform init -backend=false
+
+      - name: Terraform apply
+        run: |
+          terraform -chdir=terraform apply -auto-approve \
+            -var="git_repo_url=https://github.com/${{ github.repository }}" \
+            -var="git_repo_revision=${{ github.ref_name }}" \
+            -var="environment=ci" \
+            -var="kube_context=k3d-vyking-cluster"
+
+      # ── ArgoCD ───────────────────────────────
+      - name: Wait for ArgoCD to be ready
+        run: |
+          kubectl rollout status deployment/argocd-server -n argocd --timeout=180s
+          kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=120s
+
+      - name: Get ArgoCD admin password
+        run: |
+          PASS=$(kubectl -n argocd get secret argocd-initial-admin-secret \
+            -o jsonpath='{.data.password}' | base64 -d)
+          echo "ARGOCD_PASS=$PASS" >> $GITHUB_ENV
+
+      - name: Install ArgoCD CLI
+        run: |
+          curl -sSL -o /usr/local/bin/argocd \
+            https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+          chmod +x /usr/local/bin/argocd
+
+      - name: Wait for ArgoCD Applications to sync
+        run: |
+          # Port-forward ArgoCD in background
+          kubectl port-forward svc/argocd-server -n argocd 8080:80 &
+          sleep 5
+
+          argocd login localhost:8080 \
+            --username admin \
+            --password "$ARGOCD_PASS" \
+            --insecure
+
+          # Wait up to 10 min for both parent apps to sync
+          for app in infrastructure applications; do
+            echo "Waiting for ArgoCD app: $app"
+            argocd app wait "$app" \
+              --health \
+              --sync \
+              --timeout 600 \
+              --insecure || {
+              argocd app get "$app" --insecure
+              exit 1
+            }
+            echo "✓ $app synced and healthy"
+          done
+
+      # ── Kubernetes workload verification ──────
+      - name: Verify pods are on worker nodes (taint/toleration)
+        run: |
+          # No pod should be on the control-plane node
+          CONTROL=$(kubectl get nodes --selector=node-role.kubernetes.io/control-plane \
+            -o jsonpath='{.items[0].metadata.name}')
+          PODS_ON_CONTROL=$(kubectl get pods -A -o json | \
+            jq --arg n "$CONTROL" '[.items[] | select(.spec.nodeName==$n) |
+              select(.metadata.namespace != "kube-system") |
+              select(.metadata.namespace != "argocd")] | length')
+          echo "Non-system pods on control-plane: $PODS_ON_CONTROL"
+          [ "$PODS_ON_CONTROL" -eq 0 ] || \
+            (echo "ERROR: Workload pods scheduled on control-plane node" && exit 1)
+
+      - name: Verify deployments are running
+        run: |
+          for deploy in frontend backend; do
+            kubectl rollout status deployment/$deploy -n applications --timeout=120s
+            echo "✓ $deploy deployment ready"
+          done
+          kubectl rollout status statefulset/mysql -n infrastructure --timeout=180s
+          echo "✓ mysql statefulset ready"
+
+      - name: Verify probes are configured on all containers
+        run: |
+          for deploy in frontend backend; do
+            LIVENESS=$(kubectl get deployment/$deploy -n applications \
+              -o jsonpath='{.spec.template.spec.containers[0].livenessProbe}')
+            READINESS=$(kubectl get deployment/$deploy -n applications \
+              -o jsonpath='{.spec.template.spec.containers[0].readinessProbe}')
+            [ -n "$LIVENESS" ]  || (echo "ERROR: $deploy missing livenessProbe" && exit 1)
+            [ -n "$READINESS" ] || (echo "ERROR: $deploy missing readinessProbe" && exit 1)
+            echo "✓ $deploy probes verified"
+          done
+
+      - name: Verify resource limits are set
+        run: |
+          for deploy in frontend backend; do
+            LIMITS=$(kubectl get deployment/$deploy -n applications \
+              -o jsonpath='{.spec.template.spec.containers[0].resources.limits}')
+            [ -n "$LIMITS" ] || (echo "ERROR: $deploy missing resource limits" && exit 1)
+            echo "✓ $deploy resource limits: $LIMITS"
+          done
+
+      # ── MySQL + data persistence ──────────────
+      - name: Verify MySQL schema and seed data
+        run: |
+          MYSQL_ROOT_PWD=$(kubectl get secret mysql-credentials -n infrastructure \
+            -o jsonpath='{.data.mysql-root-password}' | base64 -d)
+
+          kubectl exec -n infrastructure mysql-0 -- \
+            mysql -u root -p"$MYSQL_ROOT_PWD" appdb \
+            -e "SELECT * FROM items;" | grep "seed-item-1"
+          echo "✓ Schema and seed data verified"
+
+      - name: Test MySQL data persistence across pod restart
+        run: |
+          MYSQL_ROOT_PWD=$(kubectl get secret mysql-credentials -n infrastructure \
+            -o jsonpath='{.data.mysql-root-password}' | base64 -d)
+
+          kubectl exec -n infrastructure mysql-0 -- \
+            mysql -u root -p"$MYSQL_ROOT_PWD" appdb \
+            -e "INSERT INTO items (name) VALUES ('persistence-test-ci');"
+
+          kubectl delete pod mysql-0 -n infrastructure
+          kubectl wait --for=condition=Ready pod/mysql-0 -n infrastructure --timeout=120s
+
+          kubectl exec -n infrastructure mysql-0 -- \
+            mysql -u root -p"$MYSQL_ROOT_PWD" appdb \
+            -e "SELECT name FROM items WHERE name='persistence-test-ci';" | \
+            grep "persistence-test-ci"
+          echo "✓ Data persisted across pod restart"
+
+      # ── Backend API via port-forward ──────────
+      - name: Test backend API endpoints
+        run: |
+          kubectl port-forward svc/backend -n applications 8081:80 &
+          sleep 5
+
+          # Health check
+          HEALTH=$(curl -sf http://localhost:8081/health)
+          echo "$HEALTH" | grep '"status":"ok"'
+          echo "$HEALTH" | grep '"database":"ok"'
+          echo "✓ Health endpoint OK"
+
+          # List items
+          ITEMS=$(curl -sf http://localhost:8081/items)
+          echo "$ITEMS" | grep "seed-item-1"
+          echo "✓ GET /items returns seed data"
+
+          # Create item
+          CREATED=$(curl -sf -X POST http://localhost:8081/items \
+            -H "Content-Type: application/json" \
+            -d '{"name":"ci-test-item"}')
+          echo "$CREATED" | grep '"id":'
+          ITEM_ID=$(echo "$CREATED" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "✓ POST /items created id=$ITEM_ID"
+
+          # Get by ID
+          curl -sf http://localhost:8081/items/$ITEM_ID | grep "ci-test-item"
+          echo "✓ GET /items/$ITEM_ID OK"
+
+          # Delete
+          curl -sf -X DELETE http://localhost:8081/items/$ITEM_ID
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8081/items/$ITEM_ID)
+          [ "$STATUS" = "404" ] || (echo "Expected 404, got $STATUS" && exit 1)
+          echo "✓ DELETE /items/$ITEM_ID → 404 confirmed"
+
+      # ── Backup CronJob ────────────────────────
+      - name: Trigger and verify backup CronJob
+        run: |
+          kubectl create job --from=cronjob/mysql-backup manual-backup-ci \
+            -n infrastructure
+
+          kubectl wait --for=condition=complete \
+            job/manual-backup-ci \
+            -n infrastructure \
+            --timeout=120s
+
+          # Verify backup file was created on PVC
+          kubectl run backup-verify --rm -it --restart=Never \
+            --image=busybox \
+            --overrides='{
+              "spec": {
+                "tolerations": [{"key":"role","operator":"Equal","value":"worker","effect":"NoSchedule"}],
+                "nodeSelector": {"role":"worker"},
+                "volumes": [{"name":"bk","persistentVolumeClaim":{"claimName":"mysql-backup-storage"}}],
+                "containers": [{"name":"c","image":"busybox",
+                  "command":["sh","-c","ls /backups/*.sql.gz | wc -l"],
+                  "volumeMounts":[{"name":"bk","mountPath":"/backups"}]}]
+              }
+            }' -n infrastructure | grep -v "^$" | tail -1 | xargs test 0 -lt
+          echo "✓ Backup file created on PVC"
+
+      # ── Ingress ───────────────────────────────
+      - name: Test ingress routing
+        run: |
+          # Add local DNS entries
+          echo "127.0.0.1 vyking.local api.vyking.local" | sudo tee -a /etc/hosts
+
+          # Wait for ingress controller
+          kubectl rollout status deployment/ingress-nginx-controller \
+            -n ingress-nginx --timeout=120s
+
+          # Test frontend ingress
+          sleep 5
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://vyking.local:8080/)
+          [ "$HTTP" = "200" ] || (echo "Frontend ingress returned $HTTP" && exit 1)
+          echo "✓ Frontend ingress: HTTP $HTTP"
+
+          # Test backend API via ingress
+          API_HEALTH=$(curl -sf http://api.vyking.local:8080/health)
+          echo "$API_HEALTH" | grep '"status":"ok"'
+          echo "✓ Backend ingress routing OK"
+
+      # ── Cleanup summary ───────────────────────
+      - name: Print test summary
+        if: always()
+        run: |
+          echo ""
+          echo "══════════════════════════════════════════"
+          echo " Cluster State Summary"
+          echo "══════════════════════════════════════════"
+          kubectl get nodes -o wide
+          echo ""
+          kubectl get pods -A --field-selector=status.phase!=Succeeded
+          echo ""
+          kubectl get ingress -A
+          echo ""
+          kubectl get pvc -A
+
+      - name: Cleanup k3d cluster
+        if: always()
+        run: k3d cluster delete vyking-cluster

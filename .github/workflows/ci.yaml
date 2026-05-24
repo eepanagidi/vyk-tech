@@ -1,0 +1,245 @@
+# ──────────────────────────────────────────────
+# CI Pipeline — runs on every PR and push to main
+# Jobs:
+#   1. lint-terraform  — fmt, validate, tflint, checkov
+#   2. lint-helm       — helm lint, kubeconform, checkov
+#   3. lint-go         — build, vet, test, trivy image scan
+#   4. policy          — OPA/conftest for Terraform + K8s manifests
+#   5. docker-build    — build + push images (main branch only)
+# ──────────────────────────────────────────────
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read          # Minimal — only read source
+  packages: write         # Needed for GHCR image push
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BACKEND: ghcr.io/${{ github.repository_owner }}/vyking-backend
+  IMAGE_FRONTEND: ghcr.io/${{ github.repository_owner }}/vyking-frontend
+
+jobs:
+  # ── 1. Terraform lint + security ───────────────────────────────────────────
+  lint-terraform:
+    name: Terraform Lint & Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.5"
+
+      - name: Terraform Format Check
+        run: terraform -chdir=terraform fmt -check -recursive
+
+      - name: Terraform Init (no backend)
+        run: terraform -chdir=terraform init -backend=false
+
+      - name: Terraform Validate
+        run: terraform -chdir=terraform validate
+
+      - name: TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.51.1
+      - run: |
+          tflint --chdir=terraform --config="$(pwd)/.tflint.hcl" --init
+          tflint --chdir=terraform --config="$(pwd)/.tflint.hcl"
+
+      - name: Checkov — Terraform
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform
+          framework: terraform
+          config_file: .checkov.yaml
+          quiet: true
+          soft_fail: false
+
+  # ── 2. Helm lint + Kubernetes manifest validation ──────────────────────────
+  lint-helm:
+    name: Helm Lint & Manifest Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.15.2"
+
+      - name: Helm Lint
+        run: helm lint applications/ --strict
+
+      - name: Render Helm templates
+        run: |
+          helm template vyking-test applications/ \
+            --set global.commonLabels.environment=ci \
+            > /tmp/rendered-manifests.yaml
+
+      - name: Install kubeconform
+        run: |
+          curl -sSLo /tmp/kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin
+
+      - name: Kubeconform — validate rendered manifests
+        run: |
+          kubeconform \
+            -strict \
+            -ignore-missing-schemas \
+            -kubernetes-version 1.29.0 \
+            -summary \
+            /tmp/rendered-manifests.yaml
+
+      - name: Checkov — Helm
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: applications
+          framework: helm
+          config_file: .checkov.yaml
+          quiet: true
+
+      - name: Checkov — Kubernetes manifests
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infrastructure
+          framework: kubernetes
+          config_file: .checkov.yaml
+          quiet: true
+
+  # ── 3. Go build + test + image security scan ───────────────────────────────
+  lint-go:
+    name: Go Build, Test & Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: backend/go.sum
+
+      - name: Go vet
+        run: go vet ./...
+        working-directory: backend
+
+      - name: Go build
+        run: CGO_ENABLED=0 go build -o /dev/null ./...
+        working-directory: backend
+
+      - name: Go test
+        run: go test -v -race -coverprofile=coverage.out ./...
+        working-directory: backend
+
+      - name: Build Docker image for scanning
+        run: |
+          docker build -t vyking-backend:ci backend/
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: vyking-backend:ci
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: 1       # Fail on HIGH/CRITICAL CVEs
+          ignore-unfixed: true
+
+  # ── 4. OPA/Conftest policy checks ──────────────────────────────────────────
+  policy:
+    name: OPA Policy Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install conftest
+        run: |
+          curl -sSLo /tmp/conftest.tar.gz \
+            https://github.com/open-policy-agent/conftest/releases/download/v0.55.0/conftest_0.55.0_Linux_x86_64.tar.gz
+          tar -xzf /tmp/conftest.tar.gz -C /usr/local/bin
+
+      - name: Render Helm for policy check
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.15.2"
+      - run: |
+          helm template vyking-policy applications/ > /tmp/rendered.yaml
+
+      - name: OPA — Kubernetes policies
+        run: |
+          conftest test /tmp/rendered.yaml \
+            --policy policy/ \
+            --namespace kubernetes \
+            --all-namespaces
+
+      - name: OPA — Infrastructure manifests
+        run: |
+          find infrastructure -name "*.yaml" ! -path "*/argocd-apps/*" \
+            -exec conftest test {} \
+              --policy policy/ \
+              --namespace kubernetes \;
+
+  # ── 5. Build & push images (main branch only) ──────────────────────────────
+  docker-build:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: [lint-terraform, lint-helm, lint-go, policy]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata — backend
+        id: meta-backend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_BACKEND }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build & push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: true
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true    # SLSA provenance attestation
+          sbom: true          # Software bill of materials
+
+      - name: Extract metadata — frontend
+        id: meta-frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_FRONTEND }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build & push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: true
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true

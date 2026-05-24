@@ -1,0 +1,43 @@
+# ──────────────────────────────────────────────
+# Child ArgoCD Application: platform-base
+#
+# Cluster prerequisites that MUST exist before MySQL:
+#   - mysql-retain StorageClass (reclaimPolicy: Retain)
+#   - mysql ServiceAccount + least-privilege Role/RoleBinding
+#
+# sync-wave "-2" → applied before Gatekeeper (-1) and MySQL/backup (0),
+# so the StorageClass and ServiceAccount are present when MySQL provisions
+# its volume and schedules its pod.
+# ──────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-base
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/part-of: infrastructure
+    app.kubernetes.io/component: base
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  project: infrastructure-local
+  source:
+    repoURL: https://github.com/eepanagidi/vyk-tech.git # replaced by scripts/init.sh
+    targetRevision: platform
+    path: infrastructure/base
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: infrastructure
+  syncPolicy:
+    automated:
+      prune: false # never auto-delete the StorageClass / ServiceAccount
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
