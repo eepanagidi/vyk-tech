@@ -59,24 +59,31 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: gatekeeper-system
-  # The Gatekeeper controller mutates its own webhook configs at runtime: it
-  # injects the TLS caBundle (and matchConditions, a k8s 1.28+ field ArgoCD's
-  # schema doesn't know). Both show up as permanent drift, and with selfHeal on
-  # ArgoCD would fight the controller (revert caBundle -> controller re-injects).
-  # Ignore everything owned by the `gatekeeper` fieldManager so ArgoCD reports
-  # Synced and never reverts controller-managed fields. The policies themselves
-  # (gatekeeper-policies app) are still fully reconciled.
+  # The Gatekeeper controller mutates its own webhook configs at runtime. Two
+  # distinct problems, two mechanisms — BOTH are required:
+  #   1. `matchConditions` (k8s 1.28+) isn't in ArgoCD's bundled schema, so the
+  #      structured-merge diff CRASHES building the typed value -> status Unknown.
+  #      A jqPathExpression ignore runs during normalization and avoids the crash.
+  #   2. The controller injects the TLS `caBundle`, which then drifts forever; with
+  #      selfHeal on, ArgoCD would fight the controller. managedFieldsManagers
+  #      ignores every field owned by the `gatekeeper` fieldManager (caBundle + any
+  #      other controller-patched field), so no whack-a-mole.
+  # The policies themselves (gatekeeper-policies app) are still fully reconciled.
   ignoreDifferences:
     - group: admissionregistration.k8s.io
       kind: MutatingWebhookConfiguration
       name: gatekeeper-mutating-webhook-configuration
       managedFieldsManagers:
         - gatekeeper
+      jqPathExpressions:
+        - '.webhooks[]?.matchConditions'
     - group: admissionregistration.k8s.io
       kind: ValidatingWebhookConfiguration
       name: gatekeeper-validating-webhook-configuration
       managedFieldsManagers:
         - gatekeeper
+      jqPathExpressions:
+        - '.webhooks[]?.matchConditions'
   syncPolicy:
     automated:
       prune: false      # Never auto-prune policy resources
