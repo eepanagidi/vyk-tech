@@ -3,6 +3,11 @@
 # ──────────────────────────────────────────────
 
 image:
+  # bitnami/mysql was retired from Docker Hub (Bitnami's 2025 image policy). The
+  # chart itself is unchanged — we point it at Bitnami's legacy image archive so
+  # it still pulls. (Swap back to a maintained tag/registry in production.)
+  registry: docker.io
+  repository: bitnamilegacy/mysql
   tag: "8.0.36"
 
 auth:

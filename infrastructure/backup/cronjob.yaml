@@ -59,7 +59,7 @@ spec:
 
           containers:
             - name: backup
-              image: bitnami/mysql:8.0.36    # Pinned — includes mysqldump
+              image: mysql:8.0.36 # Official multi-arch image with mysqldump (bitnami/* retired from Docker Hub)
               imagePullPolicy: IfNotPresent
 
               command:
