@@ -1,0 +1,68 @@
+# ConfigMap name includes environment: app-config-production, app-config-local
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config-{{ .Values.global.environment }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "vyking-apps.labels" . | nindent 4 }}
+  annotations:
+    {{- include "vyking-apps.protectionAnnotations" . | nindent 4 }}
+data:
+  BACKEND_URL: {{ .Values.config.backendUrl | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  ENVIRONMENT: {{ .Values.global.environment | quote }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config-{{ .Values.global.environment }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "vyking-apps.labels" . | nindent 4 }}
+  annotations:
+    {{- include "vyking-apps.protectionAnnotations" . | nindent 4 }}
+data:
+  nginx.conf: |
+    worker_processes auto;
+    pid /tmp/nginx.pid;
+    events { worker_connections 1024; }
+    http {
+      include       /etc/nginx/mime.types;
+      default_type  application/octet-stream;
+      sendfile on;
+      keepalive_timeout 65;
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+      # Environment banner for debugging
+      add_header X-Environment {{ .Values.global.environment | quote }} always;
+      client_body_temp_path /tmp/client_body;
+      proxy_temp_path       /tmp/proxy;
+      fastcgi_temp_path     /tmp/fastcgi;
+      uwsgi_temp_path       /tmp/uwsgi;
+      scgi_temp_path        /tmp/scgi;
+      server {
+        listen 8080;
+        server_name _;
+        location / {
+          root  /usr/share/nginx/html;
+          index index.html;
+          try_files $uri $uri/ /index.html;
+        }
+        location /healthz {
+          access_log off;
+          return 200 "ok\n";
+          add_header Content-Type text/plain;
+        }
+        location /api/ {
+          proxy_pass http://{{ include "vyking-apps.backend.name" . }}.{{ .Values.global.namespace }}.svc.cluster.local:{{ .Values.backend.service.port }}/;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_connect_timeout 5s;
+          proxy_read_timeout    10s;
+        }
+      }
+    }

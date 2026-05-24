@@ -1,0 +1,61 @@
+{{- if .Values.backend.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "vyking-apps.backend.name" . }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "vyking-apps.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["app-config-{{ .Values.global.environment }}"]
+    verbs: ["get", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "vyking-apps.backend.name" . }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "vyking-apps.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "vyking-apps.backend.name" . }}
+    namespace: {{ .Values.global.namespace }}
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: {{ include "vyking-apps.backend.name" . }}
+{{- end }}
+---
+{{- if .Values.frontend.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "vyking-apps.frontend.name" . }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "vyking-apps.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["nginx-config-{{ .Values.global.environment }}"]
+    verbs: ["get", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "vyking-apps.frontend.name" . }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "vyking-apps.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "vyking-apps.frontend.name" . }}
+    namespace: {{ .Values.global.namespace }}
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: {{ include "vyking-apps.frontend.name" . }}
+{{- end }}

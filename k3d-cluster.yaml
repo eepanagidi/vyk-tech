@@ -1,0 +1,50 @@
+# ──────────────────────────────────────────────
+# k3d cluster: 1 control-plane + 2 workers
+# Worker nodes are tainted by role so workloads
+# must explicitly tolerate them — enforces intentional scheduling
+# ──────────────────────────────────────────────
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: vyking-cluster
+
+servers: 1
+agents: 2
+
+image: rancher/k3s:v1.29.4-k3s1   # Pinned — never use latest
+
+ports:
+  - port: 8080:80
+    nodeFilters:
+      - loadbalancer
+  - port: 8443:443
+    nodeFilters:
+      - loadbalancer
+
+options:
+  k3d:
+    wait: true
+    timeout: "120s"
+
+  k3s:
+    extraArgs:
+      # Disable built-in ingress controller — we bring our own
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+      # NodeRestriction: kubelets can only modify their own node/pod objects
+      - arg: --kube-apiserver-arg=enable-admission-plugins=NodeRestriction
+        nodeFilters:
+          - server:*
+      # Label + taint worker nodes by role
+      # workload taint: only pods with toleration can schedule here
+      - arg: --node-label=role=worker
+        nodeFilters:
+          - agent:*
+      - arg: --node-taint=role=worker:NoSchedule
+        nodeFilters:
+          - agent:*
+
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true

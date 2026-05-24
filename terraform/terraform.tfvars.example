@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars and fill in:
+# cp terraform.tfvars.example terraform.tfvars
+
+kubeconfig_path      = "~/.kube/config"
+kube_context         = "k3d-vyking-cluster"
+argocd_namespace     = "argocd"
+argocd_chart_version = "7.3.11"
+git_repo_url         = "https://github.com/YOUR_USERNAME/vyking-devops"
+git_repo_revision    = "main"
+
+# Tagging — applied to all Terraform-managed resources
+environment = "local"
+project     = "vyking-platform"
+owner       = "platform-team"

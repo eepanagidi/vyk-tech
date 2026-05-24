@@ -1,0 +1,22 @@
+# ──────────────────────────────────────────────
+# SOPS configuration
+# Uses age encryption (modern, simpler than GPG)
+#
+# Setup:
+#   brew install age sops
+#   age-keygen -o ~/.config/sops/age/keys.txt
+#   Copy the public key into the recipient below
+#
+# Encrypt a secret file:
+#   sops --encrypt secrets/mysql-credentials.yaml > secrets/mysql-credentials.enc.yaml
+#
+# Decrypt (for inspection only — never commit decrypted files):
+#   sops --decrypt secrets/mysql-credentials.enc.yaml
+#
+# Apply to cluster (decrypt in-memory, pipe to kubectl):
+#   sops --decrypt secrets/mysql-credentials.enc.yaml | kubectl apply -f -
+# ──────────────────────────────────────────────
+creation_rules:
+  - path_regex: secrets/.*\.yaml$
+    age: >-
+      age1REPLACE_WITH_YOUR_PUBLIC_KEY

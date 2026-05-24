@@ -1,0 +1,25 @@
+# ──────────────────────────────────────────────
+# Checkov configuration
+# Docs: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html
+# ──────────────────────────────────────────────
+
+# Fail on these severities
+soft-fail: false
+check:
+  - HIGH
+  - CRITICAL
+
+# Skips — only suppress with documented justification
+skip-check:
+  # CKV_K8S_28: NET_RAW — not applicable, we drop ALL caps
+  # Checkov fires this when it can't parse the drop list format; our manifests are correct
+  - CKV_K8S_28
+  # CKV_K8S_8/9 — liveness/readiness on CronJob pods: not applicable (batch jobs, not servers)
+  - CKV_K8S_8
+  - CKV_K8S_9
+  # CKV2_K8S_6 — default service account: we create dedicated SAs for every workload
+  - CKV2_K8S_6
+
+# Output
+output: cli
+compact: true

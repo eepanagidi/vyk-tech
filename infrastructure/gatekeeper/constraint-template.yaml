@@ -1,0 +1,53 @@
+# ──────────────────────────────────────────────
+# Gatekeeper ConstraintTemplate: DeletionProtection
+#
+# This makes the OPA deletion-protection policy real.
+# Without this, the Rego rules are checked only by conftest/pre-commit.
+# With this, the K8s API server enforces them at admission time —
+# meaning kubectl delete on a protected resource is rejected immediately.
+#
+# Install Gatekeeper first:
+#   helm repo add gatekeeper https://open-policy-agent.github.io/gatekeeper/charts
+#   helm install gatekeeper gatekeeper/gatekeeper -n gatekeeper-system --create-namespace
+# ──────────────────────────────────────────────
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: deletionprotection
+  labels:
+    app.kubernetes.io/name: deletion-protection
+    app.kubernetes.io/component: policy
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+  annotations:
+    argocd.argoproj.io/sync-wave: "1" # after the Gatekeeper controller (wave 0), before Constraints (wave 2)
+    vyking.io/purpose: "Blocks kubectl delete on resources annotated vyking.io/deletion-protected=true"
+spec:
+  crd:
+    spec:
+      names:
+        kind: DeletionProtection
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package deletionprotection
+
+        # Block DELETE on any resource carrying the protection annotation.
+        # On a DELETE AdmissionReview the target object is in `oldObject`
+        # (`object` is null), and the GVK is in `review.kind` (the embedded
+        # object's own `kind`/`apiVersion` are not reliably populated).
+        violation[{"msg": msg}] {
+          input.review.operation == "DELETE"
+          obj := input.review.oldObject
+          obj.metadata.annotations["vyking.io/deletion-protected"] == "true"
+          # Allow if the operator has explicitly set the override annotation
+          not obj.metadata.annotations["vyking.io/deletion-override"] == "true"
+          kind := input.review.kind.kind
+          name := obj.metadata.name
+          msg := sprintf(
+            "Resource %s/%s is deletion-protected. To override, first run:\n  kubectl annotate %s %s vyking.io/deletion-override=true --overwrite\nThen retry the delete. Remove the override annotation after.",
+            [kind, name, lower(kind), name]
+          )
+        }

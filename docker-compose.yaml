@@ -1,0 +1,146 @@
+# ──────────────────────────────────────────────
+# Local integration test stack
+# Tests the real Go backend + MySQL without needing K8s at all.
+# Mirrors the K8s setup as closely as possible.
+#
+# Usage:
+#   docker compose up -d
+#   docker compose run --rm test
+#   docker compose down -v
+# ──────────────────────────────────────────────
+version: "3.9"
+
+services:
+
+  mysql:
+    image: mysql:8.0.36
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: appdb
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: apppassword
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: appdb
+      MYSQL_USER: appuser
+      MYSQL_PASSWORD: apppassword
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # Integration test runner — exits 0 on pass, 1 on fail
+  test:
+    image: curlimages/curl:8.7.1
+    depends_on:
+      backend:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        BASE="http://backend:8080"
+        PASS=0; FAIL=0
+
+        check() {
+          local desc="$1" expected="$2" actual="$3"
+          if echo "$actual" | grep -q "$expected"; then
+            echo "  ✓ $desc"
+            PASS=$((PASS+1))
+          else
+            echo "  ✗ $desc — expected '$expected', got: $actual"
+            FAIL=$((FAIL+1))
+          fi
+        }
+
+        echo ""
+        echo "══════════════════════════════════════"
+        echo " Integration Tests"
+        echo "══════════════════════════════════════"
+
+        echo ""
+        echo "── Health check ──"
+        HEALTH=$(curl -sf "$BASE/health")
+        check "status=ok"    '"status":"ok"'    "$HEALTH"
+        check "database=ok"  '"database":"ok"'  "$HEALTH"
+
+        echo ""
+        echo "── List items (seed data) ──"
+        ITEMS=$(curl -sf "$BASE/items")
+        check "Returns array"    '\[' "$ITEMS"
+        check "seed-item-1 present" "seed-item-1" "$ITEMS"
+
+        echo ""
+        echo "── Create item ──"
+        CREATED=$(curl -sf -X POST "$BASE/items" \
+          -H "Content-Type: application/json" \
+          -d '{"name":"integration-test-item"}')
+        check "Returns id"   '"id":'  "$CREATED"
+        check "Correct name" "integration-test-item" "$CREATED"
+        ITEM_ID=$(echo "$CREATED" | grep -o '"id":[0-9]*' | grep -o '[0-9]*')
+
+        echo ""
+        echo "── Get item by ID ──"
+        GET=$(curl -sf "$BASE/items/$ITEM_ID")
+        check "Item found"   "integration-test-item" "$GET"
+
+        echo ""
+        echo "── Persistence: recreate and re-read ──"
+        LIST2=$(curl -sf "$BASE/items")
+        check "Created item in list" "integration-test-item" "$LIST2"
+
+        echo ""
+        echo "── Delete item ──"
+        curl -sf -X DELETE "$BASE/items/$ITEM_ID" -o /dev/null
+        NOT_FOUND=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/items/$ITEM_ID")
+        check "Returns 404 after delete" "404" "$NOT_FOUND"
+
+        echo ""
+        echo "── Invalid requests ──"
+        BAD=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/items" \
+          -H "Content-Type: application/json" -d '{}')
+        check "Empty name → 400" "400" "$BAD"
+
+        echo ""
+        echo "══════════════════════════════════════"
+        echo " Results: $PASS passed, $FAIL failed"
+        echo "══════════════════════════════════════"
+        [ $FAIL -eq 0 ]
+
+volumes:
+  mysql-data:

@@ -1,0 +1,17 @@
+apiVersion: v2
+name: vyking-apps
+description: |
+  Helm chart for the Vyking frontend + backend applications.
+  Both components are managed in a single chart to share configuration
+  while remaining independently configurable via values.yaml.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+
+keywords:
+  - vyking
+  - backend
+  - frontend
+
+maintainers:
+  - name: Platform Team
