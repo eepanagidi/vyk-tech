@@ -73,28 +73,27 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: gatekeeper-system
-  # Gatekeeper's controller is the source of truth for its OWN webhook configs —
-  # at runtime it rewrites caBundle, failurePolicy, namespaceSelector, matchPolicy,
-  # matchConditions, etc. from its Config CR and flags. git/Helm only seeds the
-  # object on first create. So ArgoCD must not diff the webhook list:
-  #   - `matchConditions` (k8s 1.28+) isn't in ArgoCD's bundled schema -> the
-  #     structured-merge diff crashes building the typed value -> status Unknown;
-  #   - the other controller-managed fields drift forever -> permanent OutOfSync,
-  #     and with selfHeal on ArgoCD would fight the controller.
-  # Ignoring the whole `.webhooks` array fixes both cleanly. (managedFieldsManagers
-  # would be tidier but re-triggers the matchConditions typed-build crash; a jq
-  # path ignore skips that build, so it's the only mechanism that works here.)
+  # Ignore ONLY the fields the Gatekeeper controller injects at runtime, NOT the
+  # whole `.webhooks` array — ignoring all of it also hid the git-managed
+  # operations/rules, so enableDeleteOperations never synced. Narrow ignores:
+  #   - clientConfig.caBundle — the controller injects the TLS cert; permanent drift.
+  #   - matchConditions (k8s 1.28+) — not in ArgoCD's bundled schema; under SSA it
+  #     crashed the typed diff (status Unknown). The webhooks use client-side apply
+  #     (see *WebhookAnnotations above) so this is belt-and-suspenders now.
+  # operations/rules stay diffed, so the DELETE rule reconciles correctly.
   ignoreDifferences:
     - group: admissionregistration.k8s.io
       kind: MutatingWebhookConfiguration
       name: gatekeeper-mutating-webhook-configuration
       jqPathExpressions:
-        - '.webhooks'
+        - '.webhooks[]?.clientConfig.caBundle'
+        - '.webhooks[]?.matchConditions'
     - group: admissionregistration.k8s.io
       kind: ValidatingWebhookConfiguration
       name: gatekeeper-validating-webhook-configuration
       jqPathExpressions:
-        - '.webhooks'
+        - '.webhooks[]?.clientConfig.caBundle'
+        - '.webhooks[]?.matchConditions'
   syncPolicy:
     automated:
       prune: false      # Never auto-prune policy resources
