@@ -7,6 +7,12 @@
 # ──────────────────────────────────────────────
 package terraform
 
+# Required for the `some x in ...` / `x in set` expressions below. Without it,
+# conftest/OPA fails to PARSE this file — and since conftest loads every file in
+# policy/ before evaluating, that parse error breaks the whole policy run (even
+# though CI only evaluates the `kubernetes` package).
+import future.keywords.in
+
 protected_envs := {"production", "staging"}
 
 # Helm releases in protected environments must have lifecycle.prevent_destroy

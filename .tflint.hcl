@@ -7,10 +7,6 @@ plugin "terraform" {
   preset  = "recommended"
 }
 
-plugin "aws" {
-  enabled = false
-}
-
 # Enforce variable descriptions
 rule "terraform_documented_variables" {
   enabled = true

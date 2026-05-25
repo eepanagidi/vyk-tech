@@ -41,17 +41,6 @@ locals {
   #   terraform destroy -target=<resource> -var="enable_protection=false"
   enable_protection = var.enable_protection
 
-  # ── Common tags ───────────────────────────────
-  # OPA policy enforces these are present on every resource
-  common_tags = {
-    environment = var.environment
-    project     = var.project
-    managed_by  = "terraform"
-    owner       = var.owner
-    repo        = var.git_repo_url
-    protected   = tostring(local.is_protected)
-  }
-
   # Kubernetes labels (stricter key rules than Terraform tags)
   common_labels = {
     "app.kubernetes.io/managed-by" = "terraform"
