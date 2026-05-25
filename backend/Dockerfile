@@ -1,5 +1,8 @@
 # ── Build stage ───────────────────────────────
-FROM golang:1.22-alpine AS builder
+# Go 1.26.x: the binary embeds the compiler's stdlib, and trivy flags stdlib CVEs
+# for the build version. 1.22 carried 1 CRITICAL + 11 HIGH (e.g. CVE-2025-68121
+# crypto/tls, CVE-2025-22871 net/http); 1.26 patches them. Keep this current.
+FROM golang:1.26-alpine AS builder
 
 # Install CA certs and git (needed for go get)
 RUN apk add --no-cache ca-certificates git
