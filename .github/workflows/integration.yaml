@@ -132,6 +132,9 @@ jobs:
         run: |
           PASS=$(kubectl -n argocd get secret argocd-initial-admin-secret \
             -o jsonpath='{.data.password}' | base64 -d)
+          # Redact the admin password from CI logs (defense-in-depth — it isn't
+          # printed today, but mask it so it stays hidden even in verbose output).
+          echo "::add-mask::$PASS"
           echo "ARGOCD_PASS=$PASS" >> $GITHUB_ENV
 
       - name: Install ArgoCD CLI
@@ -143,15 +146,20 @@ jobs:
       - name: Wait for ArgoCD Applications to sync
         run: |
           # Resolve the env-prefixed argocd-server Service name, then port-forward.
+          # Use 8085 — k3d already binds host 8080 for the ingress loadbalancer,
+          # so port-forwarding ArgoCD to 8080 fails with "address already in use".
           ARGOCD_SVC=$(kubectl get svc -n argocd \
             -l app.kubernetes.io/name=argocd-server -o jsonpath='{.items[0].metadata.name}')
-          kubectl port-forward "svc/$ARGOCD_SVC" -n argocd 8080:80 &
+          kubectl port-forward "svc/$ARGOCD_SVC" -n argocd 8085:80 &
           sleep 5
 
-          argocd login localhost:8080 \
+          # ArgoCD serves HTTP (server.insecure) → --plaintext (not --insecure, which
+          # expects TLS and prompts "not configured with TLS"). --grpc-web tunnels the
+          # API over the port-forward.
+          argocd login localhost:8085 \
             --username admin \
             --password "$ARGOCD_PASS" \
-            --insecure
+            --plaintext --grpc-web
 
           # Wait up to 10 min for both parent apps to sync
           for app in infrastructure-local applications-local; do
@@ -160,8 +168,8 @@ jobs:
               --health \
               --sync \
               --timeout 600 \
-              --insecure || {
-              argocd app get "$app" --insecure
+              --plaintext --grpc-web || {
+              argocd app get "$app" --plaintext --grpc-web
               exit 1
             }
             echo "✓ $app synced and healthy"
@@ -170,16 +178,21 @@ jobs:
       # ── Kubernetes workload verification ──────
       - name: Verify pods are on worker nodes (taint/toleration)
         run: |
-          # No pod should be on the control-plane node
+          # Intent: the app + DB *workloads* must run on the tainted worker nodes
+          # (they carry the worker toleration/nodeSelector). Cluster-infra add-ons
+          # have no worker toleration and legitimately sit on the control-plane —
+          # exclude them like argocd/kube-system: ingress-nginx, gatekeeper-system.
           CONTROL=$(kubectl get nodes --selector=node-role.kubernetes.io/control-plane \
             -o jsonpath='{.items[0].metadata.name}')
           PODS_ON_CONTROL=$(kubectl get pods -A -o json | \
             jq --arg n "$CONTROL" '[.items[] | select(.spec.nodeName==$n) |
               select(.metadata.namespace != "kube-system") |
-              select(.metadata.namespace != "argocd")] | length')
-          echo "Non-system pods on control-plane: $PODS_ON_CONTROL"
+              select(.metadata.namespace != "argocd") |
+              select(.metadata.namespace != "ingress-nginx") |
+              select(.metadata.namespace != "gatekeeper-system")] | length')
+          echo "App/DB workload pods on control-plane (expect 0): $PODS_ON_CONTROL"
           [ "$PODS_ON_CONTROL" -eq 0 ] || \
-            (echo "ERROR: Workload pods scheduled on control-plane node" && exit 1)
+            (echo "ERROR: app/DB workload pods scheduled on control-plane node" && exit 1)
 
       - name: Verify deployments are running
         run: |
