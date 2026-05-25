@@ -245,7 +245,11 @@ jobs:
             -e "INSERT INTO items (name) VALUES ('persistence-test-ci');"
 
           kubectl delete pod mysql-0 -n infrastructure
-          kubectl wait --for=condition=Ready pod/mysql-0 -n infrastructure --timeout=120s
+          # The StatefulSet recreates mysql-0 asynchronously; `kubectl wait` errors
+          # ("pods mysql-0 not found") if the pod is momentarily absent mid-recreation,
+          # so wait for it to reappear before waiting on readiness.
+          until kubectl get pod mysql-0 -n infrastructure >/dev/null 2>&1; do sleep 2; done
+          kubectl wait --for=condition=Ready pod/mysql-0 -n infrastructure --timeout=180s
 
           kubectl exec -n infrastructure mysql-0 -- \
             mysql -u root -p"$MYSQL_ROOT_PWD" appdb \
