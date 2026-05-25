@@ -1,119 +1,81 @@
 # ──────────────────────────────────────────────
-# ArgoCD parent Applications (App-of-Apps)
+# ArgoCD parent Applications (App-of-Apps), one reusable module per tier.
 #
-# Applied via kubectl_manifest (not kubernetes_manifest) so they do NOT require
-# the argoproj.io CRDs to exist at plan time — see providers.tf for the why.
-#
-# Named with environment: infrastructure-production, applications-production
-# Production: manual sync (no automated prune). Staging/local: automated sync.
+# Applied via the argocd-application module (kubectl_manifest) so they do NOT
+# require the argoproj.io CRDs at plan time.
+# Production: manual sync (automated = null). Staging/local: automated + self-heal.
 # ──────────────────────────────────────────────
 
-resource "kubectl_manifest" "infrastructure_app" {
+module "argocd_application_infrastructure" {
+  source = "./modules/argocd-application"
+
+  name      = "infrastructure-${var.environment}"
+  namespace = var.argocd_namespace
+  project   = "infrastructure-${var.environment}"
+
+  labels = merge(local.common_labels, {
+    "app.kubernetes.io/name"      = "infrastructure-${var.environment}"
+    "app.kubernetes.io/component" = "gitops-parent"
+  })
+  annotations = merge({
+    "vyking.io/deletion-protected"                             = tostring(local.is_protected)
+    "vyking.io/environment"                                    = var.environment
+    "notifications.argoproj.io/subscribe.on-sync-failed.slack" = "devops-alerts"
+    }, local.is_production ? {
+    "notifications.argoproj.io/subscribe.on-sync-succeeded.slack" = "devops-syncs"
+  } : {})
+
+  repo_url        = var.git_repo_url
+  target_revision = var.git_repo_revision
+  source_path     = "infrastructure/argocd-apps"
+  dest_namespace  = var.argocd_namespace
+
+  sync_options = local.argocd_sync_options
+  automated    = local.argocd_automated_sync
+
   depends_on = [
     time_sleep.wait_for_argocd_crds,
-    kubectl_manifest.argocd_project_infrastructure,
+    module.argocd_project_infrastructure,
   ]
-  yaml_body = yamlencode({
-    apiVersion = "argoproj.io/v1alpha1"
-    kind       = "Application"
-    metadata = {
-      name       = "infrastructure-${var.environment}"
-      namespace  = var.argocd_namespace
-      finalizers = ["resources-finalizer.argocd.argoproj.io"]
-      labels = merge(local.common_labels, {
-        "app.kubernetes.io/name"      = "infrastructure-${var.environment}"
-        "app.kubernetes.io/component" = "gitops-parent"
-      })
-      annotations = merge({
-        "vyking.io/deletion-protected"                             = tostring(local.is_protected)
-        "vyking.io/environment"                                    = var.environment
-        "notifications.argoproj.io/subscribe.on-sync-failed.slack" = "devops-alerts"
-        }, local.is_production ? {
-        "notifications.argoproj.io/subscribe.on-sync-succeeded.slack" = "devops-syncs"
-      } : {})
-    }
-    spec = {
-      project = "infrastructure-${var.environment}"
-      source = {
-        repoURL        = var.git_repo_url
-        targetRevision = var.git_repo_revision
-        path           = "infrastructure/argocd-apps"
-      }
-      destination = {
-        server    = "https://kubernetes.default.svc"
-        namespace = var.argocd_namespace
-      }
-      # Production: no automated sync — changes require manual approval in the UI.
-      # Staging/local: automated sync + self-heal.
-      # Automated sync + self-heal everywhere except production (manual approval).
-      syncPolicy = merge(
-        {
-          syncOptions = local.argocd_sync_options
-          retry = {
-            limit   = 5
-            backoff = { duration = "5s", factor = 2, maxDuration = "3m" }
-          }
-        },
-        local.argocd_automated_sync == null ? {} : { automated = local.argocd_automated_sync }
-      )
-    }
-  })
 }
 
-resource "kubectl_manifest" "applications_app" {
+module "argocd_application_applications" {
+  source = "./modules/argocd-application"
+
+  name      = "applications-${var.environment}"
+  namespace = var.argocd_namespace
+  project   = "applications-${var.environment}"
+
+  labels = merge(local.common_labels, {
+    "app.kubernetes.io/name"      = "applications-${var.environment}"
+    "app.kubernetes.io/component" = "gitops-parent"
+  })
+  annotations = merge({
+    "vyking.io/deletion-protected"                             = tostring(local.is_protected)
+    "vyking.io/environment"                                    = var.environment
+    "notifications.argoproj.io/subscribe.on-sync-failed.slack" = "devops-alerts"
+    }, local.is_production ? {
+    "notifications.argoproj.io/subscribe.on-sync-succeeded.slack" = "devops-syncs"
+  } : {})
+
+  repo_url        = var.git_repo_url
+  target_revision = var.git_repo_revision
+  source_path     = "applications"
+  dest_namespace  = "applications"
+  source_helm = {
+    valueFiles = ["values.yaml"]
+    # Pass environment into Helm so resource names include it
+    parameters = [
+      { name = "global.environment", value = var.environment },
+      { name = "global.commonLabels.environment", value = var.environment },
+    ]
+  }
+
+  sync_options = local.argocd_sync_options
+  automated    = local.argocd_automated_sync
+
   depends_on = [
     time_sleep.wait_for_argocd_crds,
-    kubectl_manifest.argocd_project_applications,
+    module.argocd_project_applications,
   ]
-  yaml_body = yamlencode({
-    apiVersion = "argoproj.io/v1alpha1"
-    kind       = "Application"
-    metadata = {
-      name       = "applications-${var.environment}"
-      namespace  = var.argocd_namespace
-      finalizers = ["resources-finalizer.argocd.argoproj.io"]
-      labels = merge(local.common_labels, {
-        "app.kubernetes.io/name"      = "applications-${var.environment}"
-        "app.kubernetes.io/component" = "gitops-parent"
-      })
-      annotations = merge({
-        "vyking.io/deletion-protected"                             = tostring(local.is_protected)
-        "vyking.io/environment"                                    = var.environment
-        "notifications.argoproj.io/subscribe.on-sync-failed.slack" = "devops-alerts"
-        }, local.is_production ? {
-        "notifications.argoproj.io/subscribe.on-sync-succeeded.slack" = "devops-syncs"
-      } : {})
-    }
-    spec = {
-      project = "applications-${var.environment}"
-      source = {
-        repoURL        = var.git_repo_url
-        targetRevision = var.git_repo_revision
-        path           = "applications"
-        helm = {
-          valueFiles = ["values.yaml"]
-          # Pass environment into Helm so resource names include it
-          parameters = [
-            { name = "global.environment", value = var.environment },
-            { name = "global.commonLabels.environment", value = var.environment },
-          ]
-        }
-      }
-      destination = {
-        server    = "https://kubernetes.default.svc"
-        namespace = "applications"
-      }
-      # Automated sync + self-heal everywhere except production (manual approval).
-      syncPolicy = merge(
-        {
-          syncOptions = local.argocd_sync_options
-          retry = {
-            limit   = 5
-            backoff = { duration = "5s", factor = 2, maxDuration = "3m" }
-          }
-        },
-        local.argocd_automated_sync == null ? {} : { automated = local.argocd_automated_sync }
-      )
-    }
-  })
 }
