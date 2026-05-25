@@ -303,8 +303,13 @@ jobs:
             -n infrastructure \
             --timeout=120s
 
-          # Verify backup file was created on PVC
-          kubectl run backup-verify --rm -it --restart=Never \
+          # Verify a backup file exists on the PVC. The verify pod needs the worker
+          # toleration + nodeSelector to mount the worker-bound PVC. Have the
+          # container print an explicit marker (not a count) — `kubectl run --rm`
+          # also prints `pod "backup-verify" deleted`, which polluted the old
+          # `tail -1 | xargs test` parse ("invalid integer 'pod'"). `-i` (no `-t`)
+          # streams output without the no-TTY warning.
+          OUT=$(kubectl run backup-verify --rm -i --restart=Never \
             --image=busybox \
             --overrides='{
               "spec": {
@@ -312,11 +317,13 @@ jobs:
                 "nodeSelector": {"role":"worker"},
                 "volumes": [{"name":"bk","persistentVolumeClaim":{"claimName":"mysql-backup-storage"}}],
                 "containers": [{"name":"c","image":"busybox",
-                  "command":["sh","-c","ls /backups/*.sql.gz | wc -l"],
+                  "command":["sh","-c","ls /backups/*.sql.gz >/dev/null 2>&1 && echo BACKUP_OK || echo BACKUP_NONE"],
                   "volumeMounts":[{"name":"bk","mountPath":"/backups"}]}]
               }
-            }' -n infrastructure | grep -v "^$" | tail -1 | xargs test 0 -lt
-          echo "✓ Backup file created on PVC"
+            }' -n infrastructure 2>/dev/null)
+          echo "$OUT" | grep -q BACKUP_OK \
+            && echo "✓ Backup file created on PVC" \
+            || { echo "ERROR: no backup file found on PVC. Output:"; echo "$OUT"; exit 1; }
 
       # ── Ingress ───────────────────────────────
       - name: Test ingress routing
