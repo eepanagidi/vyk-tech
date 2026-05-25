@@ -120,8 +120,13 @@ jobs:
       # ── ArgoCD ───────────────────────────────
       - name: Wait for ArgoCD to be ready
         run: |
-          kubectl rollout status deployment/argocd-server -n argocd --timeout=180s
-          kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=120s
+          # ArgoCD is Helm-installed with an environment-prefixed release name
+          # (e.g. vyking-platform-local-argocd-server), so match by label, not by
+          # the bare chart name — `kubectl wait` accepts a label selector.
+          kubectl wait --for=condition=Available deployment \
+            -l app.kubernetes.io/name=argocd-server -n argocd --timeout=180s
+          kubectl wait --for=condition=Available deployment \
+            -l app.kubernetes.io/name=argocd-repo-server -n argocd --timeout=120s
 
       - name: Get ArgoCD admin password
         run: |
@@ -137,8 +142,10 @@ jobs:
 
       - name: Wait for ArgoCD Applications to sync
         run: |
-          # Port-forward ArgoCD in background
-          kubectl port-forward svc/argocd-server -n argocd 8080:80 &
+          # Resolve the env-prefixed argocd-server Service name, then port-forward.
+          ARGOCD_SVC=$(kubectl get svc -n argocd \
+            -l app.kubernetes.io/name=argocd-server -o jsonpath='{.items[0].metadata.name}')
+          kubectl port-forward "svc/$ARGOCD_SVC" -n argocd 8080:80 &
           sleep 5
 
           argocd login localhost:8080 \
