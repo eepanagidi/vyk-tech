@@ -1,0 +1,63 @@
+# ──────────────────────────────────────────────
+# Loki values — single-binary, filesystem-backed, tuned for k3d.
+#
+# Logs are written to a PVC on the `mysql-retain` StorageClass, so the log store
+# survives pod restarts AND PVC deletion (Retain) — i.e. logs persist even when
+# the workloads producing them crash/restart. Scalable-mode components and the
+# memcached caches (heavy) are disabled.
+# ──────────────────────────────────────────────
+deploymentMode: SingleBinary
+
+loki:
+  auth_enabled: false # single-tenant local install
+  commonConfig:
+    replication_factor: 1 # one replica → RF must be 1
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  limits_config:
+    retention_period: 168h # 7 days
+    ingestion_rate_mb: 10
+    ingestion_burst_size_mb: 20
+
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: mysql-retain # Retain → log history survives PVC deletion
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Disable scalable-mode components (single-binary only) and the heavy extras.
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+chunksCache:
+  enabled: false # memcached — large default footprint, not needed locally
+resultsCache:
+  enabled: false
+gateway:
+  enabled: false # query the single-binary service directly
+lokiCanary:
+  enabled: false
+test:
+  enabled: false
+minio:
+  enabled: false

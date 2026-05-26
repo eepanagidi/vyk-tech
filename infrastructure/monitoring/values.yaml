@@ -61,6 +61,13 @@ grafana:
     limits: { cpu: 250m, memory: 256Mi }
   service:
     type: ClusterIP
+  # Make logs explorable in Grafana alongside metrics.
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      uid: loki
+      url: http://loki.monitoring.svc.cluster.local:3100
+      access: proxy
   sidecar:
     dashboards:
       enabled: true # auto-load ConfigMaps labeled grafana_dashboard (our custom app dashboard)

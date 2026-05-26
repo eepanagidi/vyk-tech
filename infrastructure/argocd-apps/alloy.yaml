@@ -1,0 +1,54 @@
+# ──────────────────────────────────────────────
+# Child ArgoCD Application: Grafana Alloy (log shipper)
+#
+# DaemonSet on every node (tolerates the worker taint) that tails
+# /var/log/pods/*/*/*.log and ships to Loki — node-level collection, so logs
+# persist in Loki regardless of a pod crashing/restarting/being deleted.
+#
+# project: default — the chart creates a ClusterRole. sync-wave 4: after Loki
+# (wave 3) so the push endpoint exists.
+# ──────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: alloy
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/part-of: infrastructure
+    app.kubernetes.io/component: logging
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  project: default
+  sources:
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: alloy
+      targetRevision: "1.8.2"
+      helm:
+        valueFiles:
+          - $values/infrastructure/monitoring/alloy-values.yaml
+    - repoURL: https://github.com/eepanagidi/vyk-tech.git
+      targetRevision: platform
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
