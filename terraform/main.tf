@@ -87,9 +87,9 @@ module "argocd_project_infrastructure" {
     { group = "rbac.authorization.k8s.io", kind = "Role" },
     { group = "rbac.authorization.k8s.io", kind = "RoleBinding" },
     { group = "networking.k8s.io", kind = "NetworkPolicy" },
-    { group = "policy", kind = "PodDisruptionBudget" }, # Bitnami MySQL chart creates one
+    { group = "policy", kind = "PodDisruptionBudget" },           # Bitnami MySQL chart creates one
     { group = "monitoring.coreos.com", kind = "ServiceMonitor" }, # MySQL exporter scrape target
-    { group = "argoproj.io", kind = "Application" },    # App-of-Apps child Applications
+    { group = "argoproj.io", kind = "Application" },              # App-of-Apps child Applications
     { group = "templates.gatekeeper.sh", kind = "ConstraintTemplate" },
     { group = "constraints.gatekeeper.sh", kind = "*" },
   ]
