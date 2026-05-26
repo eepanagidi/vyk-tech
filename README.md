@@ -249,11 +249,13 @@ curl http://localhost:3000/healthz
 # Expected: "ok"
 ```
 
-You can also reach it through the Ingress (k3d maps host 8080 → ingress :80):
+You can also reach it through the Ingress (k3d maps host 8080 → ingress :80). The
+backend has no public ingress of its own — it's reached via the frontend's `/api`
+proxy (same origin), and its NetworkPolicy enforces frontend-only access:
 ```bash
-echo "127.0.0.1 vyking.local api.vyking.local" | sudo tee -a /etc/hosts
+echo "127.0.0.1 vyking.local" | sudo tee -a /etc/hosts
 curl http://vyking.local:8080/            # frontend UI
-curl http://api.vyking.local:8080/health  # backend via ingress
+curl http://vyking.local:8080/api/health  # backend, via the frontend /api proxy
 ```
 
 ### Verify Data Persistence

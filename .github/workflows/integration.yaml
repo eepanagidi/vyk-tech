@@ -303,8 +303,13 @@ jobs:
             -n infrastructure \
             --timeout=120s
 
-          # Verify backup file was created on PVC
-          kubectl run backup-verify --rm -it --restart=Never \
+          # Verify a backup file exists on the PVC. The verify pod needs the worker
+          # toleration + nodeSelector to mount the worker-bound PVC. Have the
+          # container print an explicit marker (not a count) — `kubectl run --rm`
+          # also prints `pod "backup-verify" deleted`, which polluted the old
+          # `tail -1 | xargs test` parse ("invalid integer 'pod'"). `-i` (no `-t`)
+          # streams output without the no-TTY warning.
+          OUT=$(kubectl run backup-verify --rm -i --restart=Never \
             --image=busybox \
             --overrides='{
               "spec": {
@@ -312,33 +317,36 @@ jobs:
                 "nodeSelector": {"role":"worker"},
                 "volumes": [{"name":"bk","persistentVolumeClaim":{"claimName":"mysql-backup-storage"}}],
                 "containers": [{"name":"c","image":"busybox",
-                  "command":["sh","-c","ls /backups/*.sql.gz | wc -l"],
+                  "command":["sh","-c","ls /backups/*.sql.gz >/dev/null 2>&1 && echo BACKUP_OK || echo BACKUP_NONE"],
                   "volumeMounts":[{"name":"bk","mountPath":"/backups"}]}]
               }
-            }' -n infrastructure | grep -v "^$" | tail -1 | xargs test 0 -lt
-          echo "✓ Backup file created on PVC"
+            }' -n infrastructure 2>/dev/null)
+          echo "$OUT" | grep -q BACKUP_OK \
+            && echo "✓ Backup file created on PVC" \
+            || { echo "ERROR: no backup file found on PVC. Output:"; echo "$OUT"; exit 1; }
 
       # ── Ingress ───────────────────────────────
       - name: Test ingress routing
         run: |
-          # Add local DNS entries
-          echo "127.0.0.1 vyking.local api.vyking.local" | sudo tee -a /etc/hosts
+          # Frontend host only — the backend is reached through the frontend's
+          # /api proxy, not a separate ingress (backend stays internal).
+          echo "127.0.0.1 vyking.local" | sudo tee -a /etc/hosts
 
           # Wait for ingress controller
           kubectl rollout status deployment/ingress-nginx-controller \
             -n ingress-nginx --timeout=120s
 
-          # Test frontend ingress
+          # Frontend UI via ingress
           sleep 5
           HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
             http://vyking.local:8080/)
           [ "$HTTP" = "200" ] || (echo "Frontend ingress returned $HTTP" && exit 1)
           echo "✓ Frontend ingress: HTTP $HTTP"
 
-          # Test backend API via ingress
-          API_HEALTH=$(curl -sf http://api.vyking.local:8080/health)
+          # Backend reached through the frontend's same-origin /api proxy
+          API_HEALTH=$(curl -sf http://vyking.local:8080/api/health)
           echo "$API_HEALTH" | grep '"status":"ok"'
-          echo "✓ Backend ingress routing OK"
+          echo "✓ Backend reachable via frontend /api proxy"
 
       # ── Cleanup summary ───────────────────────
       - name: Print test summary
