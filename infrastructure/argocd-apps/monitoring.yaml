@@ -1,0 +1,57 @@
+# ──────────────────────────────────────────────
+# Child ArgoCD Application: monitoring (kube-prometheus-stack)
+#
+# Prometheus + Grafana + kube-state-metrics + node-exporter + the prometheus
+# operator (which provides the ServiceMonitor/PrometheusRule CRDs the rest of the
+# platform scrapes through).
+#
+# project: default — like the gatekeeper operator, this installs cluster-scoped
+# resources (CRDs, ClusterRoles) that a tightly-scoped AppProject would block.
+# sync-wave 3: comes up after the core platform is healthy (observability observes
+# the running platform; it must not block the DB/app from converging).
+# ──────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/part-of: infrastructure
+    app.kubernetes.io/component: observability
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  project: default
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: "85.3.3"
+      helm:
+        valueFiles:
+          - $values/infrastructure/monitoring/values.yaml
+    - repoURL: https://github.com/eepanagidi/vyk-tech.git
+      targetRevision: platform
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: false # don't auto-delete monitoring data/CRDs on git drift
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true            # the CRDs are large — server-side apply
+      - SkipDryRunOnMissingResource=true # CRDs are created within this same sync
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
