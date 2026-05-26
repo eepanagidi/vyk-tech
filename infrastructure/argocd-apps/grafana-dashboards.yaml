@@ -1,0 +1,47 @@
+# ──────────────────────────────────────────────
+# Child ArgoCD Application: Grafana custom dashboards
+#
+# Directory-based (raw manifests, not a Helm chart) — syncs the dashboard
+# ConfigMaps in infrastructure/monitoring/dashboards/, which Grafana's sidecar
+# auto-loads via the grafana_dashboard label.
+#
+# project: default (ConfigMaps land in the monitoring namespace). sync-wave 4:
+# after Grafana (wave 3) is up.
+# ──────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: grafana-dashboards
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/part-of: infrastructure
+    app.kubernetes.io/component: observability
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/eepanagidi/vyk-tech.git
+    targetRevision: platform
+    path: infrastructure/monitoring/dashboards
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
