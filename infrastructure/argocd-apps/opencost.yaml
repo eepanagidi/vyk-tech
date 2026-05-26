@@ -1,0 +1,56 @@
+# ──────────────────────────────────────────────
+# Child ArgoCD Application: OpenCost (cost monitoring)
+#
+# CNCF cost-allocation engine. Reuses the kube-prometheus-stack Prometheus
+# (no bundled Prometheus). Local-cluster costs are estimates (default on-prem
+# pricing). Kubecost is the documented upgrade for a richer UI + cloud billing.
+#
+# project: default — OpenCost's cost-model needs a ClusterRole to read cluster
+# resources. sync-wave 4: after the metrics stack (wave 3) so its Prometheus +
+# the ServiceMonitor CRD already exist.
+# ──────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: opencost
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/part-of: infrastructure
+    app.kubernetes.io/component: cost
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  project: default
+  sources:
+    - repoURL: https://opencost.github.io/opencost-helm-chart
+      chart: opencost
+      targetRevision: "2.5.20"
+      helm:
+        valueFiles:
+          - $values/infrastructure/monitoring/opencost-values.yaml
+    - repoURL: https://github.com/eepanagidi/vyk-tech.git
+      targetRevision: platform
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

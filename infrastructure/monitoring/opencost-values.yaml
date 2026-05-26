@@ -1,0 +1,41 @@
+# ──────────────────────────────────────────────
+# OpenCost values — reuses the kube-prometheus-stack Prometheus (no internal
+# Prometheus deployed). On a local cluster there's no cloud bill, so costs are
+# ESTIMATES from OpenCost's default on-prem pricing.
+#
+# Kubecost is the documented upgrade path (richer UI + cloud billing) — see
+# IMPLEMENTATION_REVIEW.md §8.A.
+# ──────────────────────────────────────────────
+opencost:
+  prometheus:
+    # Don't run a bundled Prometheus — point at the platform's.
+    internal:
+      enabled: false
+    external:
+      enabled: true
+      url: "http://kps-prometheus.monitoring.svc.cluster.local:9090"
+
+  exporter:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+
+  ui:
+    enabled: true
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+  # Expose OpenCost's cost metrics to our Prometheus (it discovers ServiceMonitors
+  # cluster-wide), so cost series are queryable in Grafana alongside the rest.
+  metrics:
+    serviceMonitor:
+      enabled: true
