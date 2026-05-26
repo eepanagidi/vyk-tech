@@ -34,7 +34,7 @@ spec:
         valueFiles:
           - $values/infrastructure/monitoring/alloy-values.yaml
     - repoURL: https://github.com/eepanagidi/vyk-tech.git
-      targetRevision: platform
+      targetRevision: feat/observability
       ref: values
   destination:
     server: https://kubernetes.default.svc

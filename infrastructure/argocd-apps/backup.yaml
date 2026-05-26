@@ -16,7 +16,7 @@ spec:
   project: infrastructure-local
   source:
     repoURL: https://github.com/eepanagidi/vyk-tech.git   # Replaced by scripts/init.sh
-    targetRevision: platform
+    targetRevision: feat/observability
     path: infrastructure/backup
   destination:
     server: https://kubernetes.default.svc

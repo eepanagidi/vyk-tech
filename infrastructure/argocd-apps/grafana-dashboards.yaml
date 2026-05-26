@@ -28,7 +28,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/eepanagidi/vyk-tech.git
-    targetRevision: platform
+    targetRevision: feat/observability
     path: infrastructure/monitoring/dashboards
   destination:
     server: https://kubernetes.default.svc
