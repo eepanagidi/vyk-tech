@@ -1,14 +1,13 @@
 # ──────────────────────────────────────────────
-# Ingress resources
+# Ingress
 #
 # Local access (no real DNS):
-#   Add to /etc/hosts:
-#     127.0.0.1  vyking.local api.vyking.local
+#   Add to /etc/hosts:  127.0.0.1  vyking.local
+#   Then:  http://vyking.local:8080  → frontend (which proxies /api/* → backend)
 #
-# Then access:
-#   http://vyking.local:8080         → frontend
-#   http://api.vyking.local:8080     → backend API
-#   http://api.vyking.local:8080/health → health endpoint
+# The backend is intentionally NOT exposed via its own ingress — it is reachable
+# only through the frontend's /api proxy, and the backend NetworkPolicy enforces
+# frontend-only access (defense in depth). See applications/templates/networkpolicy.yaml.
 # ──────────────────────────────────────────────
 
 # ── Frontend Ingress ──────────────────────────
@@ -48,35 +47,3 @@ spec:
                 name: {{ include "vyking-apps.frontend.name" . }}
                 port:
                   number: {{ .Values.frontend.service.port }}
-
----
-# ── Backend API Ingress ───────────────────────
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: backend-api
-  namespace: {{ .Values.global.namespace }}
-  labels:
-    {{- include "vyking-apps.labels" . | nindent 4 }}
-    {{- include "vyking-apps.backend.selectorLabels" . | nindent 4 }}
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /$2
-    nginx.ingress.kubernetes.io/use-regex: "true"
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      add_header X-Frame-Options "DENY" always;
-      add_header X-Content-Type-Options "nosniff" always;
-    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
-    nginx.ingress.kubernetes.io/limit-rps: "20"
-spec:
-  ingressClassName: nginx
-  rules:
-    - host: api.vyking.local
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "vyking-apps.backend.name" . }}
-                port:
-                  number: {{ .Values.backend.service.port }}

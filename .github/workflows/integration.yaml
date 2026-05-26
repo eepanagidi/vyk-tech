@@ -328,24 +328,25 @@ jobs:
       # ── Ingress ───────────────────────────────
       - name: Test ingress routing
         run: |
-          # Add local DNS entries
-          echo "127.0.0.1 vyking.local api.vyking.local" | sudo tee -a /etc/hosts
+          # Frontend host only — the backend is reached through the frontend's
+          # /api proxy, not a separate ingress (backend stays internal).
+          echo "127.0.0.1 vyking.local" | sudo tee -a /etc/hosts
 
           # Wait for ingress controller
           kubectl rollout status deployment/ingress-nginx-controller \
             -n ingress-nginx --timeout=120s
 
-          # Test frontend ingress
+          # Frontend UI via ingress
           sleep 5
           HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
             http://vyking.local:8080/)
           [ "$HTTP" = "200" ] || (echo "Frontend ingress returned $HTTP" && exit 1)
           echo "✓ Frontend ingress: HTTP $HTTP"
 
-          # Test backend API via ingress
-          API_HEALTH=$(curl -sf http://api.vyking.local:8080/health)
+          # Backend reached through the frontend's same-origin /api proxy
+          API_HEALTH=$(curl -sf http://vyking.local:8080/api/health)
           echo "$API_HEALTH" | grep '"status":"ok"'
-          echo "✓ Backend ingress routing OK"
+          echo "✓ Backend reachable via frontend /api proxy"
 
       # ── Cleanup summary ───────────────────────
       - name: Print test summary
