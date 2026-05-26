@@ -56,10 +56,6 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
-      # The mysqld-exporter ServiceMonitor's CRD is installed by the monitoring
-      # app (later wave); skip the dry-run so this app's ServiceMonitor retries
-      # until the CRD exists instead of failing the whole sync.
-      - SkipDryRunOnMissingResource=true
       # These three protect the data volume specifically:
       - Delete=false                    # ArgoCD will not delete any resource in this app
       - PrunePropagationPolicy=orphan   # If prune ever runs, orphan instead of delete

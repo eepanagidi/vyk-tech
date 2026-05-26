@@ -165,7 +165,12 @@ metrics:
     limits:
       cpu: 100m
       memory: 128Mi
-  # Prometheus (watches ServiceMonitors cluster-wide) scrapes the exporter for
-  # DB-level metrics (connections, query rate, buffer pool, etc.).
+  # ServiceMonitor is intentionally NOT created here. Its CRD ships with the
+  # monitoring app (sync-wave 3), but this MySQL app is sync-wave 0 — declaring
+  # the monitor here deadlocked the App-of-Apps (mysql can't go Healthy without
+  # the CRD; the CRD's app is gated behind mysql). The monitor is defined in
+  # infrastructure/monitoring/values.yaml (prometheus.additionalServiceMonitors),
+  # alongside its CRD. The exporter + mysql-metrics Service above are all that's
+  # needed here; Prometheus scrapes them via that monitor.
   serviceMonitor:
-    enabled: true
+    enabled: false

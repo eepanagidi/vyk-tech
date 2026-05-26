@@ -51,6 +51,25 @@ prometheus:
             requests:
               storage: 5Gi
 
+  # MySQL exporter ServiceMonitor lives HERE, not in the mysql chart, so it ships
+  # in the same app as its CRD (kube-prometheus-stack installs the ServiceMonitor
+  # CRD). The mysql app is sync-wave 0 but this CRD only exists at wave 3, so
+  # defining the monitor in the mysql chart deadlocked the deploy (mysql can't go
+  # Healthy without the CRD; the CRD's app is gated behind mysql). It selects the
+  # mysql-metrics Service in the infrastructure namespace.
+  additionalServiceMonitors:
+    - name: mysql
+      namespaceSelector:
+        matchNames: ["infrastructure"]
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: mysql
+          app.kubernetes.io/instance: mysql
+          app.kubernetes.io/component: metrics
+      endpoints:
+        - port: metrics
+          interval: 30s
+
 grafana:
   enabled: true
   # The chart generates a random admin password in the `kps-grafana` Secret:
