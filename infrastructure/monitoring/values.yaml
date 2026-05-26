@@ -57,8 +57,11 @@ grafana:
   #   kubectl -n monitoring get secret kps-grafana -o jsonpath='{.data.admin-password}' | base64 -d
   defaultDashboardsEnabled: true # node / cluster / namespace / pod CPU + memory dashboards
   resources:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits: { cpu: 250m, memory: 256Mi }
+    # Idle Grafana sits ~200Mi; loading the default dashboards + running Loki/
+    # Prometheus queries spikes past 256Mi → OOMKilled (exit 137) and the pod
+    # crashloops. 512Mi gives the working headroom.
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { cpu: 250m, memory: 512Mi }
   service:
     type: ClusterIP
   # Make logs explorable in Grafana alongside metrics.
