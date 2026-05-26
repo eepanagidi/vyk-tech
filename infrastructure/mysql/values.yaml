@@ -150,4 +150,22 @@ serviceAccount:
 # primary.persistence.storageClass.
 
 metrics:
-  enabled: false
+  enabled: true
+  # bitnami/mysqld-exporter was retired from Docker Hub (same 2025 policy as the
+  # server image) — pull from the legacy archive. Swap to a maintained
+  # tag/registry in production.
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/mysqld-exporter
+    tag: 0.15.1-debian-12-r25
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+  # Prometheus (watches ServiceMonitors cluster-wide) scrapes the exporter for
+  # DB-level metrics (connections, query rate, buffer pool, etc.).
+  serviceMonitor:
+    enabled: true
