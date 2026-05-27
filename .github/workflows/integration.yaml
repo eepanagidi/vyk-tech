@@ -230,8 +230,12 @@ jobs:
         run: |
           # Intent: the app + DB *workloads* must run on the tainted worker nodes
           # (they carry the worker toleration/nodeSelector). Cluster-infra add-ons
-          # have no worker toleration and legitimately sit on the control-plane —
-          # exclude them like argocd/kube-system: ingress-nginx, gatekeeper-system.
+          # have no such pinning and legitimately sit on the control-plane — exclude
+          # them like argocd/kube-system: ingress-nginx, gatekeeper-system, and
+          # monitoring. The monitoring namespace also runs DaemonSets (node-exporter,
+          # alloy) that MUST run on every node incl. the control-plane, so 0-there is
+          # impossible by design. This check still asserts the real app (applications
+          # ns) and DB (infrastructure ns) stay off the control-plane.
           CONTROL=$(kubectl get nodes --selector=node-role.kubernetes.io/control-plane \
             -o jsonpath='{.items[0].metadata.name}')
           PODS_ON_CONTROL=$(kubectl get pods -A -o json | \
@@ -239,7 +243,8 @@ jobs:
               select(.metadata.namespace != "kube-system") |
               select(.metadata.namespace != "argocd") |
               select(.metadata.namespace != "ingress-nginx") |
-              select(.metadata.namespace != "gatekeeper-system")] | length')
+              select(.metadata.namespace != "gatekeeper-system") |
+              select(.metadata.namespace != "monitoring")] | length')
           echo "App/DB workload pods on control-plane (expect 0): $PODS_ON_CONTROL"
           [ "$PODS_ON_CONTROL" -eq 0 ] || \
             (echo "ERROR: app/DB workload pods scheduled on control-plane node" && exit 1)
