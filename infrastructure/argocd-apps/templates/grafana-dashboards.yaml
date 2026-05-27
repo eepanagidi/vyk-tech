@@ -1,23 +1,23 @@
 # ──────────────────────────────────────────────
-# Child ArgoCD Application: Grafana Alloy (log shipper)
+# Child ArgoCD Application: Grafana custom dashboards
 #
-# DaemonSet on every node (tolerates the worker taint) that tails
-# /var/log/pods/*/*/*.log and ships to Loki — node-level collection, so logs
-# persist in Loki regardless of a pod crashing/restarting/being deleted.
+# Directory-based (raw manifests, not a Helm chart) — syncs the dashboard
+# ConfigMaps in infrastructure/monitoring/dashboards/, which Grafana's sidecar
+# auto-loads via the grafana_dashboard label.
 #
-# project: default — the chart creates a ClusterRole. sync-wave 4: after Loki
-# (wave 3) so the push endpoint exists.
+# project: default (ConfigMaps land in the monitoring namespace). sync-wave 4:
+# after Grafana (wave 3) is up.
 # ──────────────────────────────────────────────
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: alloy
+  name: grafana-dashboards
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   labels:
     app.kubernetes.io/part-of: infrastructure
-    app.kubernetes.io/component: logging
+    app.kubernetes.io/component: observability
     app.kubernetes.io/managed-by: argocd
     environment: local
     project: vyking-platform
@@ -26,16 +26,10 @@ metadata:
     argocd.argoproj.io/sync-wave: "4"
 spec:
   project: default
-  sources:
-    - repoURL: https://grafana.github.io/helm-charts
-      chart: alloy
-      targetRevision: "1.8.2"
-      helm:
-        valueFiles:
-          - $values/infrastructure/monitoring/alloy-values.yaml
-    - repoURL: https://github.com/eepanagidi/vyk-tech.git
-      targetRevision: master
-      ref: values
+  source:
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: {{ .Values.targetRevision }}
+    path: infrastructure/monitoring/dashboards
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
@@ -45,7 +39,6 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true
     retry:
       limit: 5
       backoff:

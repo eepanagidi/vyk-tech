@@ -29,6 +29,16 @@ module "argocd_application_infrastructure" {
   target_revision = var.git_repo_revision
   source_path     = "infrastructure/argocd-apps"
   dest_namespace  = var.argocd_namespace
+  # infrastructure/argocd-apps is a Helm chart that renders the child Applications.
+  # Pass the deploy repo + revision as parameters so the children reference the same
+  # repo/branch the parent was deployed from. This keeps any branch name OUT of the
+  # committed manifests (no more stale targetRevision after a feature branch merges).
+  source_helm = {
+    parameters = [
+      { name = "repoURL", value = var.git_repo_url },
+      { name = "targetRevision", value = var.git_repo_revision },
+    ]
+  }
 
   sync_options = local.argocd_sync_options
   automated    = local.argocd_automated_sync

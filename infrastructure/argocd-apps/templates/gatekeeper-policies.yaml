@@ -29,8 +29,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/eepanagidi/vyk-tech.git
-    targetRevision: master
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: {{ .Values.targetRevision }}
     path: infrastructure/gatekeeper-policies
   destination:
     server: https://kubernetes.default.svc

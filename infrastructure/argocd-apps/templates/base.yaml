@@ -1,47 +1,43 @@
 # ──────────────────────────────────────────────
-# Child ArgoCD Application: Grafana custom dashboards
+# Child ArgoCD Application: platform-base
 #
-# Directory-based (raw manifests, not a Helm chart) — syncs the dashboard
-# ConfigMaps in infrastructure/monitoring/dashboards/, which Grafana's sidecar
-# auto-loads via the grafana_dashboard label.
+# Cluster prerequisites that MUST exist before MySQL:
+#   - mysql-retain StorageClass (reclaimPolicy: Retain)
+#   - mysql ServiceAccount + least-privilege Role/RoleBinding
 #
-# project: default (ConfigMaps land in the monitoring namespace). sync-wave 4:
-# after Grafana (wave 3) is up.
+# sync-wave "-2" → applied before Gatekeeper (-1) and MySQL/backup (0),
+# so the StorageClass and ServiceAccount are present when MySQL provisions
+# its volume and schedules its pod.
 # ──────────────────────────────────────────────
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: grafana-dashboards
+  name: platform-base
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   labels:
     app.kubernetes.io/part-of: infrastructure
-    app.kubernetes.io/component: observability
+    app.kubernetes.io/component: base
     app.kubernetes.io/managed-by: argocd
     environment: local
     project: vyking-platform
     owner: platform-team
   annotations:
-    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/sync-wave: "-2"
 spec:
-  project: default
+  project: infrastructure-local
   source:
-    repoURL: https://github.com/eepanagidi/vyk-tech.git
-    targetRevision: master
-    path: infrastructure/monitoring/dashboards
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: {{ .Values.targetRevision }}
+    path: infrastructure/base
   destination:
     server: https://kubernetes.default.svc
-    namespace: monitoring
+    namespace: infrastructure
   syncPolicy:
     automated:
-      prune: true
+      prune: false # never auto-delete the StorageClass / ServiceAccount
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-    retry:
-      limit: 5
-      backoff:
-        duration: 15s
-        factor: 2
-        maxDuration: 5m
+      - ServerSideApply=true

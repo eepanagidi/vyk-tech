@@ -35,8 +35,8 @@ spec:
       helm:
         valueFiles:
           - $values/infrastructure/monitoring/values.yaml
-    - repoURL: https://github.com/eepanagidi/vyk-tech.git
-      targetRevision: master
+    - repoURL: {{ .Values.repoURL }}
+      targetRevision: {{ .Values.targetRevision }}
       ref: values
   destination:
     server: https://kubernetes.default.svc

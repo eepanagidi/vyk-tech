@@ -1,49 +1,55 @@
 # ──────────────────────────────────────────────
-# Child ArgoCD Application: cert-manager issuers (local CA + leaf certs)
+# Child ArgoCD Application: Loki (log store)
 #
-# Directory-based (raw cert-manager CRs, not a chart): the self-signed → CA →
-# CA-issuer trust chain plus the ArgoCD server certificate.
+# Single-binary Loki, filesystem-backed on the mysql-retain StorageClass so the
+# log history survives pod restarts AND PVC deletion. Grafana queries it via the
+# Loki datasource provisioned by the monitoring app.
 #
-# project: default — creates cluster-scoped ClusterIssuers and a cert in the
-# argocd namespace. sync-wave -1: after cert-manager (wave -2) so the CRDs +
-# webhook exist. SkipDryRunOnMissingResource because the cert-manager CRDs are
-# installed by the wave -2 app and may not exist on the first sync pass.
+# project: default — the chart creates a ClusterRole. sync-wave 3: alongside the
+# metrics stack. prune: false — never auto-delete the log store.
 # ──────────────────────────────────────────────
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: cert-manager-issuers
+  name: loki
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   labels:
     app.kubernetes.io/part-of: infrastructure
-    app.kubernetes.io/component: pki
+    app.kubernetes.io/component: logging
     app.kubernetes.io/managed-by: argocd
     environment: local
     project: vyking-platform
     owner: platform-team
   annotations:
-    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/sync-wave: "3"
+    vyking.io/contains-stateful-data: "true"
 spec:
   project: default
-  source:
-    repoURL: https://github.com/eepanagidi/vyk-tech.git
-    targetRevision: master
-    path: infrastructure/cert-manager/issuers
+  sources:
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: loki
+      targetRevision: "6.34.0"
+      helm:
+        valueFiles:
+          - $values/infrastructure/monitoring/loki-values.yaml
+    - repoURL: {{ .Values.repoURL }}
+      targetRevision: {{ .Values.targetRevision }}
+      ref: values
   destination:
     server: https://kubernetes.default.svc
-    namespace: cert-manager
+    namespace: monitoring
   syncPolicy:
     automated:
-      prune: false
+      prune: false # never auto-delete the log store
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
       - SkipDryRunOnMissingResource=true
     retry:
-      limit: 10
+      limit: 5
       backoff:
         duration: 15s
         factor: 2

@@ -1,48 +1,48 @@
 # ──────────────────────────────────────────────
-# Child ArgoCD Application: Loki (log store)
+# Child ArgoCD Application: OpenCost (cost monitoring)
 #
-# Single-binary Loki, filesystem-backed on the mysql-retain StorageClass so the
-# log history survives pod restarts AND PVC deletion. Grafana queries it via the
-# Loki datasource provisioned by the monitoring app.
+# CNCF cost-allocation engine. Reuses the kube-prometheus-stack Prometheus
+# (no bundled Prometheus). Local-cluster costs are estimates (default on-prem
+# pricing). Kubecost is the documented upgrade for a richer UI + cloud billing.
 #
-# project: default — the chart creates a ClusterRole. sync-wave 3: alongside the
-# metrics stack. prune: false — never auto-delete the log store.
+# project: default — OpenCost's cost-model needs a ClusterRole to read cluster
+# resources. sync-wave 4: after the metrics stack (wave 3) so its Prometheus +
+# the ServiceMonitor CRD already exist.
 # ──────────────────────────────────────────────
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: loki
+  name: opencost
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   labels:
     app.kubernetes.io/part-of: infrastructure
-    app.kubernetes.io/component: logging
+    app.kubernetes.io/component: cost
     app.kubernetes.io/managed-by: argocd
     environment: local
     project: vyking-platform
     owner: platform-team
   annotations:
-    argocd.argoproj.io/sync-wave: "3"
-    vyking.io/contains-stateful-data: "true"
+    argocd.argoproj.io/sync-wave: "4"
 spec:
   project: default
   sources:
-    - repoURL: https://grafana.github.io/helm-charts
-      chart: loki
-      targetRevision: "6.34.0"
+    - repoURL: https://opencost.github.io/opencost-helm-chart
+      chart: opencost
+      targetRevision: "2.5.20"
       helm:
         valueFiles:
-          - $values/infrastructure/monitoring/loki-values.yaml
-    - repoURL: https://github.com/eepanagidi/vyk-tech.git
-      targetRevision: master
+          - $values/infrastructure/monitoring/opencost-values.yaml
+    - repoURL: {{ .Values.repoURL }}
+      targetRevision: {{ .Values.targetRevision }}
       ref: values
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
   syncPolicy:
     automated:
-      prune: false # never auto-delete the log store
+      prune: false
       selfHeal: true
     syncOptions:
       - CreateNamespace=true

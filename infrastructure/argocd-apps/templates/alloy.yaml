@@ -1,24 +1,23 @@
 # ──────────────────────────────────────────────
-# Child ArgoCD Application: OpenCost (cost monitoring)
+# Child ArgoCD Application: Grafana Alloy (log shipper)
 #
-# CNCF cost-allocation engine. Reuses the kube-prometheus-stack Prometheus
-# (no bundled Prometheus). Local-cluster costs are estimates (default on-prem
-# pricing). Kubecost is the documented upgrade for a richer UI + cloud billing.
+# DaemonSet on every node (tolerates the worker taint) that tails
+# /var/log/pods/*/*/*.log and ships to Loki — node-level collection, so logs
+# persist in Loki regardless of a pod crashing/restarting/being deleted.
 #
-# project: default — OpenCost's cost-model needs a ClusterRole to read cluster
-# resources. sync-wave 4: after the metrics stack (wave 3) so its Prometheus +
-# the ServiceMonitor CRD already exist.
+# project: default — the chart creates a ClusterRole. sync-wave 4: after Loki
+# (wave 3) so the push endpoint exists.
 # ──────────────────────────────────────────────
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: opencost
+  name: alloy
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   labels:
     app.kubernetes.io/part-of: infrastructure
-    app.kubernetes.io/component: cost
+    app.kubernetes.io/component: logging
     app.kubernetes.io/managed-by: argocd
     environment: local
     project: vyking-platform
@@ -28,26 +27,25 @@ metadata:
 spec:
   project: default
   sources:
-    - repoURL: https://opencost.github.io/opencost-helm-chart
-      chart: opencost
-      targetRevision: "2.5.20"
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: alloy
+      targetRevision: "1.8.2"
       helm:
         valueFiles:
-          - $values/infrastructure/monitoring/opencost-values.yaml
-    - repoURL: https://github.com/eepanagidi/vyk-tech.git
-      targetRevision: master
+          - $values/infrastructure/monitoring/alloy-values.yaml
+    - repoURL: {{ .Values.repoURL }}
+      targetRevision: {{ .Values.targetRevision }}
       ref: values
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
   syncPolicy:
     automated:
-      prune: false
+      prune: true
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
-      - SkipDryRunOnMissingResource=true
     retry:
       limit: 5
       backoff:
