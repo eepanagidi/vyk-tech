@@ -24,6 +24,12 @@ kubeProxy:
   enabled: false
 
 prometheusOperator:
+  # Tolerate the worker taint so the monitoring workloads spread off the single
+  # untainted control-plane node. Without this they ALL pile onto the server
+  # node (alongside k3s control plane + ArgoCD + Gatekeeper); on a small CI
+  # runner that node hits memory-pressure eviction → the app goes Degraded.
+  tolerations:
+    - operator: Exists
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 200m, memory: 256Mi }
@@ -42,6 +48,9 @@ prometheus:
     resources:
       requests: { cpu: 150m, memory: 512Mi }
       limits: { cpu: 750m, memory: 1Gi }
+    # Spread onto the worker nodes (tolerate the worker taint) — see operator note.
+    tolerations:
+      - operator: Exists
     storageSpec:
       volumeClaimTemplate:
         spec:
@@ -81,6 +90,9 @@ grafana:
     # crashloops. 512Mi gives the working headroom.
     requests: { cpu: 50m, memory: 256Mi }
     limits: { cpu: 250m, memory: 512Mi }
+  # Spread onto the worker nodes (tolerate the worker taint) — see operator note.
+  tolerations:
+    - operator: Exists
   service:
     type: ClusterIP
   # Make logs explorable in Grafana alongside metrics.
@@ -98,6 +110,9 @@ grafana:
       enabled: true # auto-load datasource ConfigMaps labeled grafana_datasource (Loki, added later)
 
 kube-state-metrics:
+  # Spread onto the worker nodes (tolerate the worker taint) — see operator note.
+  tolerations:
+    - operator: Exists
   resources:
     requests: { cpu: 20m, memory: 64Mi }
     limits: { cpu: 100m, memory: 128Mi }

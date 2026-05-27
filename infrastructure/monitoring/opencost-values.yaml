@@ -7,6 +7,11 @@
 # IMPLEMENTATION_REVIEW.md §8.A.
 # ──────────────────────────────────────────────
 opencost:
+  # Tolerate the worker taint so OpenCost can schedule on a worker instead of
+  # piling onto the untainted control-plane node (memory-pressured on a small CI
+  # runner).
+  tolerations:
+    - operator: Exists
   prometheus:
     # Don't run a bundled Prometheus — point at the platform's.
     internal:

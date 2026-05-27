@@ -30,6 +30,10 @@ loki:
 
 singleBinary:
   replicas: 1
+  # Tolerate the worker taint so Loki can schedule on a worker instead of piling
+  # onto the untainted control-plane node (memory-pressured on a small CI runner).
+  tolerations:
+    - operator: Exists
   persistence:
     enabled: true
     size: 5Gi
