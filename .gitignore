@@ -29,3 +29,6 @@ secrets/*.yaml
 
 # Reviewer-facing implementation review — delivered separately (PDF), not in the repo
 IMPLEMENTATION_REVIEW.md
+
+# Local demo walkthrough — not part of the repo
+DEMO.md

@@ -16,7 +16,9 @@ Git Repository
 │   ├── mysql/              ← Bitnami MySQL values
 │   ├── backup/             ← CronJob + PVC
 │   ├── gatekeeper/        ← OPA Gatekeeper DeletionProtection ConstraintTemplate
-│   └── gatekeeper-policies/ ← The Constraints (which resources are protected)
+│   ├── gatekeeper-policies/ ← The Constraints (which resources are protected)
+│   ├── cert-manager/      ← cert-manager values + local CA issuers (TLS)
+│   └── monitoring/        ← kube-prometheus-stack, Loki, Alloy, OpenCost values + dashboards + alert rules
 └── applications/           ← Custom Helm chart: frontend + backend
 ```
 
@@ -28,28 +30,36 @@ claims it, the Gatekeeper CRD exists before its Constraints):
 
 ```
 terraform apply
-    ├─▶ ArgoCD installed (Helm)            +  ingress-nginx installed (Helm)
+    ├─▶ ArgoCD installed (Helm, serves HTTPS)  +  ingress-nginx installed (Helm)
     └─▶ infrastructure-local  (parent App, watches infrastructure/argocd-apps/)
+         ├─▶ cert-manager         (wave -2) → cert-manager controller + CRDs (TLS)
+         ├─▶ cert-manager-issuers (wave -1) → self-signed CA + ClusterIssuer, ArgoCD server cert
          ├─▶ platform-base        (wave -2) → StorageClass (Retain) + MySQL RBAC
          ├─▶ gatekeeper           (wave  0) → OPA controller + ConstraintTemplate
          ├─▶ gatekeeper-policies  (wave  1) → DeletionProtection Constraints
          ├─▶ mysql                (wave  0) → Bitnami MySQL (multi-source: chart + our values)
-         └─▶ backup               (wave  0) → backup PVC + every-5-min CronJob
+         ├─▶ backup               (wave  0) → backup PVC + every-5-min CronJob
+         ├─▶ monitoring           (wave  3) → kube-prometheus-stack (Prometheus/Grafana/Alertmanager) + alert rules
+         ├─▶ loki / alloy         (wave 3/4) → log aggregation (node-level, crash-surviving)
+         ├─▶ opencost             (wave  4) → cost allocation
+         └─▶ grafana-dashboards   (wave  4) → custom platform dashboard
     └─▶ applications-local    (parent App, watches applications/)
-         └─▶ Custom Helm chart → frontend + backend (+ HPA, Ingress, NetworkPolicies)
+         └─▶ Custom Helm chart → frontend (HTTPS ingress) + backend (+ HPA, NetworkPolicies)
 ```
 
 Resource names carry the environment suffix (e.g. `backend-local`, `mysql`,
 `infrastructure-local`) — set by the `environment` Terraform variable (default `local`).
 
 ### Security Highlights
+- **TLS everywhere** via cert-manager: the frontend ingress and the ArgoCD server
+  serve HTTPS from a local self-signed CA (swap the issuer for Let's Encrypt / a real CA in prod)
 - All containers run **non-root** with `readOnlyRootFilesystem: true`
 - **Capabilities dropped** (`drop: ALL`) on every container
 - **NetworkPolicies**: default-deny with explicit per-component allow rules
-- **RBAC**: dedicated ServiceAccounts with minimum required permissions
-- MySQL password sourced from **K8s Secret**, never hardcoded or in Git
-- **PodDisruptionBudgets** protect minimum availability during node maintenance
-- Seccomp profile `RuntimeDefault` on all pods
+- **ArgoCD RBAC**: default-deny + named roles (`platform-admin` / `deployer` / `viewer`); k8s ServiceAccounts are least-privilege (token not auto-mounted)
+- MySQL password is **generated** (`openssl rand`) into a K8s Secret, never hardcoded or in Git
+- **Gatekeeper** rejects deletion of protected resources at admission (`deny`)
+- **PodDisruptionBudgets** + `RuntimeDefault` seccomp on all pods
 
 ---
 
@@ -168,20 +178,21 @@ kubectl get applications -n argocd -w
 kubectl -n argocd get secret argocd-initial-admin-secret \
   -o jsonpath='{.data.password}' | base64 -d && echo
 
-# Port-forward (8080 is taken by the k3d load-balancer → use 8085)
-kubectl port-forward svc/vyking-platform-local-argocd-server -n argocd 8085:80
+# Port-forward to the TLS port (8080 is taken by the k3d load-balancer → use 8085)
+kubectl port-forward svc/vyking-platform-local-argocd-server -n argocd 8085:443
 ```
 
-Open http://localhost:8085 — login with `admin` and the password above.
+Open https://localhost:8085 (accept the self-signed cert) — login with `admin` and the
+password above. ArgoCD serves HTTPS (`server.insecure=false`) with a cert-manager
+CA-signed certificate.
 
-You should see **seven** Applications, all Healthy/Synced:
-- `infrastructure-local` (parent) — App-of-Apps for the infra side
-- `applications-local` (parent) — frontend + backend chart
+All Applications should be Healthy/Synced:
+- `infrastructure-local` / `applications-local` (parents)
+- `cert-manager` / `cert-manager-issuers` — TLS controller + local CA
 - `platform-base` — StorageClass + MySQL RBAC
-- `gatekeeper` — OPA controller + ConstraintTemplate
-- `gatekeeper-policies` — DeletionProtection Constraints
-- `mysql` — Bitnami MySQL
-- `backup` — backup PVC + CronJob
+- `gatekeeper` / `gatekeeper-policies` — OPA controller + DeletionProtection Constraints
+- `mysql` — Bitnami MySQL · `backup` — PVC + CronJob
+- `monitoring` / `loki` / `alloy` / `opencost` / `grafana-dashboards` — observability
 
 ```bash
 kubectl get applications -n argocd
@@ -249,13 +260,18 @@ curl http://localhost:3000/healthz
 # Expected: "ok"
 ```
 
-You can also reach it through the Ingress (k3d maps host 8080 → ingress :80). The
-backend has no public ingress of its own — it's reached via the frontend's `/api`
-proxy (same origin), and its NetworkPolicy enforces frontend-only access:
+You can also reach it through the Ingress over **HTTPS** (k3d maps host 8443 → ingress
+:443; cert-manager issues the cert from the local CA). The backend has no public
+ingress of its own — it's reached via the frontend's `/api` proxy (same origin), and
+its NetworkPolicy enforces frontend-only access:
 ```bash
 echo "127.0.0.1 vyking.local" | sudo tee -a /etc/hosts
-curl http://vyking.local:8080/            # frontend UI
-curl http://vyking.local:8080/api/health  # backend, via the frontend /api proxy
+curl -sk https://vyking.local:8443/            # frontend UI (HTTPS, CA-signed; -k for the local CA)
+curl -sk https://vyking.local:8443/api/health  # backend, via the frontend /api proxy
+# HTTP redirects to HTTPS:
+curl -s -o /dev/null -w "%{http_code}\n" http://vyking.local:8080/   # → 308
+# Inspect the served cert (issuer should be vyking-local-ca):
+echo | openssl s_client -connect vyking.local:8443 -servername vyking.local 2>/dev/null | openssl x509 -noout -issuer
 ```
 
 ### Verify Data Persistence
@@ -276,6 +292,47 @@ kubectl exec -it -n infrastructure mysql-0 -- \
   mysql -u root -p"$(kubectl get secret mysql-credentials -n infrastructure \
     -o jsonpath='{.data.mysql-root-password}' | base64 -d)" appdb \
   -e "SELECT * FROM items WHERE name='persistence-test';"
+```
+
+---
+
+### Observability (metrics, logs, cost)
+
+A full observability stack runs as ArgoCD apps in the `monitoring` namespace
+(see `DEMO.md` for a one-shot block that starts all the UIs):
+
+```bash
+# Grafana — dashboards, log explorer, alert rules
+kubectl port-forward svc/monitoring-grafana -n monitoring 3000:80 &
+kubectl get secret monitoring-grafana -n monitoring -o jsonpath='{.data.admin-password}' | base64 -d; echo
+# → http://localhost:3000  (Dashboards → "Vyking Platform Overview"; Explore → Loki for logs, range ~2 days)
+
+kubectl port-forward svc/kps-prometheus -n monitoring 9090:9090 &   # Status → Targets (incl. mysql-metrics)
+kubectl port-forward svc/opencost       -n monitoring 9091:9090 &   # cost by namespace → http://localhost:9091
+```
+
+- **Metrics**: kube-prometheus-stack (Prometheus + Grafana + node-exporter + kube-state-metrics); MySQL exporter scraped via a ServiceMonitor.
+- **Logs**: Loki + a Grafana Alloy DaemonSet tailing `/var/log/pods` at the node level, so logs survive pod crashes/restarts.
+- **Cost**: OpenCost (reuses the platform Prometheus); Kubecost is the documented upgrade.
+
+### TLS (cert-manager)
+
+```bash
+kubectl get clusterissuers          # vyking-selfsigned-issuer, vyking-ca-issuer (Ready)
+kubectl get certificates -A         # vyking-ca, frontend-tls, argocd-server-tls (Ready)
+```
+A self-signed bootstrap issuer mints a local CA (`vyking-ca-issuer`) that signs the
+frontend ingress and ArgoCD server certs. Production swaps the issuer for Let's Encrypt
+or a corporate CA with no consumer changes.
+
+### Alerts
+
+Alertmanager is enabled; Prometheus loads the kube-prometheus-stack default rules plus
+platform rules (`MySQLDown`, `MySQLBackupNotSucceeding`, `MySQLBackupJobFailed`).
+
+```bash
+kubectl port-forward svc/kps-alertmanager -n monitoring 9093:9093 &   # → http://localhost:9093
+# Or in Grafana → Alerting → Alert rules
 ```
 
 ---
@@ -322,6 +379,10 @@ kubectl delete pvc mysql-backup-storage -n infrastructure
 | `maxUnavailable: 0` rolling update | Zero-downtime — always maintain full capacity during deploys |
 | `topologySpreadConstraints` | Ensures pods don't co-locate on same node, surviving single-node failure |
 | Backup retention in CronJob | Self-cleaning; keeps last 288 backups (~24h at 5-min cadence) without external tooling |
+| cert-manager local CA for TLS | One trust root signs the ingress + ArgoCD certs; swap the issuer for ACME/real CA in prod with no consumer changes |
+| Observability as GitOps apps | Prometheus/Grafana/Loki/Alloy/OpenCost deployed and versioned like everything else; logs collected node-level so they survive pod crashes |
+| Gatekeeper `deny` + teardown lift | Real admission-time deletion protection; teardown removes the webhook/constraints first so `terraform destroy` isn't blocked |
+| cert-manager pinned to v1.18.2 | Matches the cluster's k8s 1.29; newer CRDs use `selectableFields` (1.31+) which breaks ServerSideApply on 1.29 |
 
 ---
 
@@ -337,21 +398,24 @@ kubectl delete pvc mysql-backup-storage -n infrastructure
 | 4. Gatekeeper | `DeletionProtection` constraint | `kubectl delete` on a protected resource is rejected at admission (in `deny`) |
 | 5. ArgoCD app | `prune: false` on mysql app | Git removal doesn't trigger K8s deletion |
 
-**Gatekeeper enforcement mode.** The constraints ship as `enforcementAction: warn`
-locally — a `kubectl delete` on a protected PVC/Secret/StatefulSet still succeeds but
-prints a Gatekeeper warning, so `terraform destroy`/teardown isn't blocked. Set them
-to `deny` for staging/production, where the same delete is **rejected**:
+**Gatekeeper enforcement mode.** The constraints run in `enforcementAction: deny` — a
+`kubectl delete` on a protected StatefulSet/PVC/Secret/Application is **rejected at
+admission**:
 
 ```
-$ kubectl delete secret mysql-credentials -n infrastructure
+$ kubectl delete statefulset mysql -n infrastructure
 Error from server (Forbidden): admission webhook "validation.gatekeeper.sh" denied
-the request: [protect-db-secrets] Resource Secret/mysql-credentials is deletion-protected.
+the request: [protect-statefulsets] Resource StatefulSet/mysql is deletion-protected.
 ```
 
 For this to fire on deletes, the Gatekeeper webhook is configured with
 `enableDeleteOperations: true` (it defaults to CREATE/UPDATE only) and the rego matches
-on `oldObject` (the object under review on a DELETE). Layers 1-3 + 5 protect the data
-regardless of Gatekeeper's mode — the PV `Retain` policy is the real backstop.
+on `oldObject` (the object under review on a DELETE). Because `deny` would otherwise
+block teardown, `scripts/teardown.sh` removes the validating webhook + constraints
+before `terraform destroy` (and `k3d cluster delete` bypasses admission entirely).
+Layers 1-3 + 5 still protect the data regardless of Gatekeeper's mode — the PV `Retain`
+policy is the real backstop. For authorized deletion, use the override annotation
+(see below).
 
 ### Override procedure (intentional deletion)
 
