@@ -1,0 +1,7 @@
+# Git source for the child Applications' own-repo references (their values files,
+# directory paths, and ref sources). The parent Application overrides both of these
+# via Helm parameters that Terraform sets from git_repo_url / git_repo_revision, so
+# NO branch name is committed in the child manifests. This default is only the trunk,
+# used for local `helm template` rendering.
+repoURL: https://github.com/eepanagidi/vyk-tech.git
+targetRevision: master

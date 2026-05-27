@@ -67,8 +67,8 @@ spec:
             argocd.argoproj.io/sync-options: ServerSideApply=false
     # ConstraintTemplate only (Constraints live in the gatekeeper-policies app,
     # which syncs after the template's generated CRD exists).
-    - repoURL: https://github.com/eepanagidi/vyk-tech.git
-      targetRevision: feat/tls-alerts
+    - repoURL: {{ .Values.repoURL }}
+      targetRevision: {{ .Values.targetRevision }}
       path: infrastructure/gatekeeper
   destination:
     server: https://kubernetes.default.svc

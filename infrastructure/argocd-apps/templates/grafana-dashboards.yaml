@@ -27,8 +27,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/eepanagidi/vyk-tech.git
-    targetRevision: feat/tls-alerts
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: {{ .Values.targetRevision }}
     path: infrastructure/monitoring/dashboards
   destination:
     server: https://kubernetes.default.svc

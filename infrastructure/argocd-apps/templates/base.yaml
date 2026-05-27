@@ -28,8 +28,8 @@ metadata:
 spec:
   project: infrastructure-local
   source:
-    repoURL: https://github.com/eepanagidi/vyk-tech.git # replaced by scripts/init.sh
-    targetRevision: feat/tls-alerts
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: {{ .Values.targetRevision }}
     path: infrastructure/base
   destination:
     server: https://kubernetes.default.svc

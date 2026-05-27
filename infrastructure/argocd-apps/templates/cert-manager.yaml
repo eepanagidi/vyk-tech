@@ -37,8 +37,8 @@ spec:
       helm:
         valueFiles:
           - $values/infrastructure/cert-manager/values.yaml
-    - repoURL: https://github.com/eepanagidi/vyk-tech.git
-      targetRevision: feat/tls-alerts
+    - repoURL: {{ .Values.repoURL }}
+      targetRevision: {{ .Values.targetRevision }}
       ref: values
   destination:
     server: https://kubernetes.default.svc

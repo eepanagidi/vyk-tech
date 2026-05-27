@@ -1,0 +1,5 @@
+apiVersion: v2
+name: vyking-argocd-apps
+description: App-of-Apps child Applications for the Vyking platform (infrastructure tier)
+type: application
+version: 0.1.0
