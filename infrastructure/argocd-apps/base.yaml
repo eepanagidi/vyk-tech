@@ -29,7 +29,7 @@ spec:
   project: infrastructure-local
   source:
     repoURL: https://github.com/eepanagidi/vyk-tech.git # replaced by scripts/init.sh
-    targetRevision: feat/tls-alerts
+    targetRevision: master
     path: infrastructure/base
   destination:
     server: https://kubernetes.default.svc

@@ -36,7 +36,7 @@ spec:
         valueFiles:
           - $values/infrastructure/monitoring/values.yaml
     - repoURL: https://github.com/eepanagidi/vyk-tech.git
-      targetRevision: feat/tls-alerts
+      targetRevision: master
       ref: values
   destination:
     server: https://kubernetes.default.svc
