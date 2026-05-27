@@ -47,6 +47,19 @@ jobs:
         with:
           terraform_version: "1.8.5"
 
+      # Free ~20-30GB of preinstalled bloat the runner doesn't need (.NET, GHC,
+      # Android SDK, CodeQL, large cached Docker images). The k3d nodes share the
+      # host disk; without this the full observability image set pushes the disk
+      # past the kubelet image-GC threshold (ImageGCFailed / FreeDiskSpaceFailed),
+      # which slows image pulls and adds startup turbulence.
+      - name: Free up runner disk space
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/lib/android /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          echo "after cleanup:"; df -h / | tail -1
+
       # ── Build real images ────────────────────
       # Tag 0.1.0 to match applications/values.yaml (image.tag) so the rendered
       # Deployments pull exactly what we import — :test would ImagePullBackOff.
@@ -164,22 +177,32 @@ jobs:
             --password "$ARGOCD_PASS" \
             --plaintext --grpc-web
 
-          # Wait up to 18 min per parent app. infrastructure-local now pulls the
-          # full observability stack (kube-prometheus-stack, Loki, Alloy, OpenCost),
-          # which takes much longer to image-pull + become Healthy on a cold CI
-          # runner. `argocd app wait` returns as soon as the app is healthy+synced,
-          # so a larger timeout only raises the ceiling — it never slows a fast run.
+          # Poll until each parent app reaches Synced/Healthy (up to 20 min each).
+          #
+          # We deliberately DON'T use `argocd app wait --health`: it aborts on the
+          # first transition to Degraded. On this small CI runner the heavy
+          # observability pods (notably Prometheus, whose init-config-reloader
+          # waits on the operator) flap through Degraded/Progressing during
+          # startup, so app wait fails on a transient blip even though the stack
+          # converges seconds later. This loop tolerates transient states and only
+          # fails if the app hasn't actually settled on Synced/Healthy by the
+          # deadline. (Status is read straight from the Application CR via kubectl.)
           for app in infrastructure-local applications-local; do
-            echo "Waiting for ArgoCD app: $app"
-            argocd app wait "$app" \
-              --health \
-              --sync \
-              --timeout 1080 \
-              --plaintext --grpc-web || {
-              argocd app get "$app" --plaintext --grpc-web
-              exit 1
-            }
-            echo "✓ $app synced and healthy"
+            echo "Waiting for ArgoCD app: $app (up to 20 min, tolerating transient Degraded)"
+            deadline=$((SECONDS + 1200))
+            last=""
+            while true; do
+              s=$(kubectl get application "$app" -n argocd \
+                    -o jsonpath='{.status.sync.status}/{.status.health.status}' 2>/dev/null)
+              [ "$s" = "Synced/Healthy" ] && { echo "✓ $app: $s"; break; }
+              [ "$s" != "$last" ] && echo "  $app → $s"; last="$s"
+              if [ "$SECONDS" -gt "$deadline" ]; then
+                echo "✗ $app did not converge (last: $s)"
+                argocd app get "$app" --plaintext --grpc-web || true
+                exit 1
+              fi
+              sleep 15
+            done
           done
 
       # Runs only if a previous step failed — captures why apps didn't converge
