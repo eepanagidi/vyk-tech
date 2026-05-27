@@ -1,0 +1,29 @@
+# ──────────────────────────────────────────────
+# TLS certificate for the ArgoCD server.
+#
+# With server.insecure removed (see terraform/modules/argocd/argocd-values.yaml),
+# argocd-server serves HTTPS and reads its cert from the `argocd-server-tls`
+# Secret — which cert-manager populates here, CA-signed instead of ArgoCD's
+# default self-signed cert. argocd-server watches the Secret and hot-reloads it.
+# ──────────────────────────────────────────────
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: argocd-server-tls
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: infrastructure
+    app.kubernetes.io/component: pki
+spec:
+  secretName: argocd-server-tls
+  duration: 8760h # 1 year
+  dnsNames:
+    - argocd-server
+    - argocd-server.argocd
+    - argocd-server.argocd.svc
+    - argocd-server.argocd.svc.cluster.local
+    - argocd.vyking.local
+  issuerRef:
+    name: vyking-ca-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io

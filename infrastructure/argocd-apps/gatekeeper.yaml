@@ -68,7 +68,7 @@ spec:
     # ConstraintTemplate only (Constraints live in the gatekeeper-policies app,
     # which syncs after the template's generated CRD exists).
     - repoURL: https://github.com/eepanagidi/vyk-tech.git
-      targetRevision: feat/observability
+      targetRevision: feat/tls-alerts
       path: infrastructure/gatekeeper
   destination:
     server: https://kubernetes.default.svc

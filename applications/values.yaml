@@ -113,6 +113,17 @@ backend:
 # ──────────────────────────────────────────────
 # Frontend
 # ──────────────────────────────────────────────
+# ── Ingress / TLS ──────────────────────────────
+# cert-manager issues the cert for `host` from the named ClusterIssuer (the local
+# CA, see infrastructure/cert-manager) into `secretName`, and ingress-nginx serves
+# HTTPS. On k3d the loadbalancer maps host 8443 → 443.
+ingress:
+  host: vyking.local
+  tls:
+    enabled: true
+    clusterIssuer: vyking-ca-issuer
+    secretName: frontend-tls
+
 frontend:
   enabled: true
 

@@ -23,6 +23,12 @@ metadata:
     nginx.ingress.kubernetes.io/rewrite-target: /
     # Proxy the /api/ path to the backend service
     nginx.ingress.kubernetes.io/use-regex: "true"
+    {{- if .Values.ingress.tls.enabled }}
+    # cert-manager issues the TLS cert for the host below from this ClusterIssuer.
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer | quote }}
+    # Redirect plain HTTP → HTTPS once the cert is in place.
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    {{- end }}
     # Security headers
     nginx.ingress.kubernetes.io/configuration-snippet: |
       add_header X-Frame-Options "SAMEORIGIN" always;
@@ -36,8 +42,14 @@ metadata:
     nginx.ingress.kubernetes.io/limit-rps: "50"
 spec:
   ingressClassName: nginx
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName | quote }}
+  {{- end }}
   rules:
-    - host: vyking.local
+    - host: {{ .Values.ingress.host }}
       http:
         paths:
           - path: /

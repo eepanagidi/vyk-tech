@@ -1,46 +1,49 @@
 # ──────────────────────────────────────────────
-# Child ArgoCD Application: Grafana custom dashboards
+# Child ArgoCD Application: cert-manager issuers (local CA + leaf certs)
 #
-# Directory-based (raw manifests, not a Helm chart) — syncs the dashboard
-# ConfigMaps in infrastructure/monitoring/dashboards/, which Grafana's sidecar
-# auto-loads via the grafana_dashboard label.
+# Directory-based (raw cert-manager CRs, not a chart): the self-signed → CA →
+# CA-issuer trust chain plus the ArgoCD server certificate.
 #
-# project: default (ConfigMaps land in the monitoring namespace). sync-wave 4:
-# after Grafana (wave 3) is up.
+# project: default — creates cluster-scoped ClusterIssuers and a cert in the
+# argocd namespace. sync-wave -1: after cert-manager (wave -2) so the CRDs +
+# webhook exist. SkipDryRunOnMissingResource because the cert-manager CRDs are
+# installed by the wave -2 app and may not exist on the first sync pass.
 # ──────────────────────────────────────────────
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: grafana-dashboards
+  name: cert-manager-issuers
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   labels:
     app.kubernetes.io/part-of: infrastructure
-    app.kubernetes.io/component: observability
+    app.kubernetes.io/component: pki
     app.kubernetes.io/managed-by: argocd
     environment: local
     project: vyking-platform
     owner: platform-team
   annotations:
-    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/sync-wave: "-1"
 spec:
   project: default
   source:
     repoURL: https://github.com/eepanagidi/vyk-tech.git
     targetRevision: feat/tls-alerts
-    path: infrastructure/monitoring/dashboards
+    path: infrastructure/cert-manager/issuers
   destination:
     server: https://kubernetes.default.svc
-    namespace: monitoring
+    namespace: cert-manager
   syncPolicy:
     automated:
-      prune: true
+      prune: false
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
     retry:
-      limit: 5
+      limit: 10
       backoff:
         duration: 15s
         factor: 2

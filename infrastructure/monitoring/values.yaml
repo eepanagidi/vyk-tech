@@ -7,10 +7,51 @@
 # ──────────────────────────────────────────────
 fullnameOverride: kps
 
-# Alertmanager off in this first slice — not needed for metrics/dashboards and
-# saves resources. (A "backup hasn't succeeded" alert is a documented follow-up.)
+# Alertmanager — receives firing alerts from Prometheus. The chart's default
+# route/receiver is kept (alerts are visible in the Alertmanager UI and Prometheus
+# /alerts); a real Slack/email/PagerDuty receiver would be wired via
+# alertmanager.config. emptyDir storage (no PVC) to keep the CI footprint small.
 alertmanager:
-  enabled: false
+  enabled: true
+  alertmanagerSpec:
+    tolerations:
+      - operator: Exists # spread off the control-plane node, like the rest
+    resources:
+      requests: { cpu: 25m, memory: 64Mi }
+      limits: { cpu: 100m, memory: 128Mi }
+
+# Platform-specific alert rules. kube-prometheus-stack's defaultRules already
+# ship the generic k8s/node alerts (KubePodCrashLooping, TargetDown, node memory
+# pressure, etc.); these add the app/DB-specific ones for this platform.
+additionalPrometheusRulesMap:
+  vyking-platform:
+    groups:
+      - name: vyking.mysql
+        rules:
+          - alert: MySQLDown
+            expr: mysql_up == 0
+            for: 2m
+            labels: { severity: critical }
+            annotations:
+              summary: "MySQL is down ({{ $labels.instance }})"
+              description: "mysqld-exporter reports mysql_up=0 for more than 2 minutes."
+      - name: vyking.backup
+        rules:
+          # CronJob runs every 5m; alert if nothing has completed in 30m.
+          - alert: MySQLBackupNotSucceeding
+            expr: (time() - max(kube_job_status_completion_time{namespace="infrastructure"})) > 1800
+            for: 5m
+            labels: { severity: warning }
+            annotations:
+              summary: "No successful MySQL backup in the last 30 minutes"
+              description: "No mysql-backup Job has completed recently (CronJob schedule is every 5m)."
+          - alert: MySQLBackupJobFailed
+            expr: kube_job_status_failed{namespace="infrastructure"} > 0
+            for: 1m
+            labels: { severity: warning }
+            annotations:
+              summary: "A MySQL backup job has failed"
+              description: "Job {{ $labels.job_name }} in the infrastructure namespace reports a failed status."
 
 # k3s/k3d serve these in-process; their standard scrape targets don't exist, so
 # disable the ServiceMonitors to avoid permanently-down targets.
