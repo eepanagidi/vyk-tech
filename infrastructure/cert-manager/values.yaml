@@ -1,0 +1,37 @@
+# ──────────────────────────────────────────────
+# cert-manager values — installs the CRDs + controller/webhook/cainjector.
+#
+# cert-manager issues the TLS certificates for the platform: the frontend
+# ingress (vyking.local) and the ArgoCD server, both signed by a local
+# self-signed CA (see issuers/). Production would point the issuer at
+# Let's Encrypt or a corporate CA instead — the rest stays the same.
+# ──────────────────────────────────────────────
+crds:
+  enabled: true # ship the cert-manager CRDs with the chart (Certificate, Issuer, ...)
+
+# Spread off the single untainted control-plane node (tolerate the worker taint),
+# consistent with the monitoring stack and the mysql/backend worker-pinning.
+tolerations:
+  - operator: Exists
+resources:
+  requests: { cpu: 10m, memory: 64Mi }
+  limits: { cpu: 200m, memory: 128Mi }
+
+webhook:
+  tolerations:
+    - operator: Exists
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { cpu: 100m, memory: 64Mi }
+
+cainjector:
+  tolerations:
+    - operator: Exists
+  resources:
+    requests: { cpu: 10m, memory: 64Mi }
+    limits: { cpu: 100m, memory: 128Mi }
+
+# Post-install hook that verifies the API is reachable — let it run on a worker too.
+startupapicheck:
+  tolerations:
+    - operator: Exists

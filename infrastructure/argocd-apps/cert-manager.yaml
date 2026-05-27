@@ -1,0 +1,54 @@
+# ──────────────────────────────────────────────
+# Child ArgoCD Application: cert-manager
+#
+# Installs cert-manager (CRDs + controller/webhook/cainjector). Provides the
+# local CA that issues TLS certs for the frontend ingress and the ArgoCD server.
+#
+# project: default — cert-manager needs cluster-scoped RBAC + installs CRDs.
+# sync-wave -2: before the issuers (wave -1) and well before anything requesting
+# certificates, so the webhook/CRDs are ready when Certificate/Issuer CRs apply.
+# ──────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/part-of: infrastructure
+    app.kubernetes.io/component: pki
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  project: default
+  sources:
+    - repoURL: https://charts.jetstack.io
+      chart: cert-manager
+      targetRevision: "v1.20.2"
+      helm:
+        valueFiles:
+          - $values/infrastructure/cert-manager/values.yaml
+    - repoURL: https://github.com/eepanagidi/vyk-tech.git
+      targetRevision: feat/tls-alerts
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

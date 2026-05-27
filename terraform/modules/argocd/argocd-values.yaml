@@ -12,7 +12,11 @@ global:
 
 configs:
   params:
-    server.insecure: "true"    # TLS terminated at load-balancer in local setup
+    # ArgoCD serves HTTPS. cert-manager populates the `argocd-server-tls` Secret
+    # with a CA-signed cert (infrastructure/cert-manager/issuers/argocd-server-cert.yaml)
+    # and argocd-server hot-reloads it. CI logs in over TLS with `--insecure`
+    # (encrypted; skips verifying the local self-signed CA) instead of `--plaintext`.
+    server.insecure: "false"
 
   cm:
     # Health check for child Applications (App of Apps)
