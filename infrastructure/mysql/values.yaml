@@ -150,4 +150,27 @@ serviceAccount:
 # primary.persistence.storageClass.
 
 metrics:
-  enabled: false
+  enabled: true
+  # bitnami/mysqld-exporter was retired from Docker Hub (same 2025 policy as the
+  # server image) — pull from the legacy archive. Swap to a maintained
+  # tag/registry in production.
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/mysqld-exporter
+    tag: 0.15.1-debian-12-r25
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+  # ServiceMonitor is intentionally NOT created here. Its CRD ships with the
+  # monitoring app (sync-wave 3), but this MySQL app is sync-wave 0 — declaring
+  # the monitor here deadlocked the App-of-Apps (mysql can't go Healthy without
+  # the CRD; the CRD's app is gated behind mysql). The monitor is defined in
+  # infrastructure/monitoring/values.yaml (prometheus.additionalServiceMonitors),
+  # alongside its CRD. The exporter + mysql-metrics Service above are all that's
+  # needed here; Prometheus scrapes them via that monitor.
+  serviceMonitor:
+    enabled: false

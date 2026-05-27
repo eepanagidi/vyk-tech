@@ -1,49 +1,46 @@
 # ──────────────────────────────────────────────
-# Child ArgoCD Application: Gatekeeper policies (Constraints)
+# Child ArgoCD Application: Grafana custom dashboards
 #
-# Split from the gatekeeper app on purpose. A Constraint (kind DeletionProtection)
-# requires the CRD that Gatekeeper GENERATES from the ConstraintTemplate at
-# runtime. Applying both in one sync deadlocks: the Constraint is "invalid" until
-# the CRD exists, which fails the whole sync — so the controller never installs.
+# Directory-based (raw manifests, not a Helm chart) — syncs the dashboard
+# ConfigMaps in infrastructure/monitoring/dashboards/, which Grafana's sidecar
+# auto-loads via the grafana_dashboard label.
 #
-# sync-wave "1": runs after the gatekeeper controller + ConstraintTemplate
-# (wave 0) are healthy, so the DeletionProtection CRD already exists. Retry +
-# SkipDryRunOnMissingResource cover any residual timing gap.
+# project: default (ConfigMaps land in the monitoring namespace). sync-wave 4:
+# after Grafana (wave 3) is up.
 # ──────────────────────────────────────────────
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: gatekeeper-policies
+  name: grafana-dashboards
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   labels:
     app.kubernetes.io/part-of: infrastructure
-    app.kubernetes.io/component: policy
+    app.kubernetes.io/component: observability
     app.kubernetes.io/managed-by: argocd
     environment: local
     project: vyking-platform
     owner: platform-team
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-wave: "4"
 spec:
   project: default
   source:
     repoURL: https://github.com/eepanagidi/vyk-tech.git
     targetRevision: feat/observability
-    path: infrastructure/gatekeeper-policies
+    path: infrastructure/monitoring/dashboards
   destination:
     server: https://kubernetes.default.svc
-    namespace: gatekeeper-system
+    namespace: monitoring
   syncPolicy:
     automated:
-      prune: false
+      prune: true
       selfHeal: true
     syncOptions:
-      - ServerSideApply=true
-      - SkipDryRunOnMissingResource=true
+      - CreateNamespace=true
     retry:
-      limit: 10
+      limit: 5
       backoff:
         duration: 15s
         factor: 2

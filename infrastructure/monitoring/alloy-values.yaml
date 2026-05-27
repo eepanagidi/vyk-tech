@@ -1,0 +1,58 @@
+# ──────────────────────────────────────────────
+# Grafana Alloy — node-level log collector (DaemonSet).
+#
+# Tails each node's /var/log/pods/*/*/*.log (the real container log files on
+# containerd/k3s) and ships them to Loki. Because collection is node-level, a
+# pod can crash / restart / be deleted and its logs are already shipped to Loki —
+# log history is independent of the pod's lifecycle.
+# ──────────────────────────────────────────────
+controller:
+  type: daemonset
+  # Run on every node, including the tainted workers, so worker pod logs are collected.
+  tolerations:
+    - operator: Exists
+
+alloy:
+  mounts:
+    varlog: true # mount host /var/log (contains /var/log/pods)
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  configMap:
+    content: |-
+      // Discover this node's pod log files.
+      local.file_match "pod_logs" {
+        path_targets = [{ __path__ = "/var/log/pods/*/*/*.log" }]
+      }
+
+      loki.source.file "pods" {
+        targets    = local.file_match.pod_logs.targets
+        forward_to = [loki.process.k8s.receiver]
+      }
+
+      // Derive namespace / pod / container labels from the file path:
+      //   /var/log/pods/<namespace>_<pod>_<uid>/<container>/<n>.log
+      loki.process "k8s" {
+        stage.regex {
+          expression = "/var/log/pods/(?P<namespace>[^_]+)_(?P<pod>[^_]+)_[^/]+/(?P<container>[^/]+)/[0-9]+\\.log"
+          source     = "filename"
+        }
+        stage.labels {
+          values = {
+            namespace = "",
+            pod       = "",
+            container = "",
+          }
+        }
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }

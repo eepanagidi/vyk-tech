@@ -26,3 +26,6 @@ secrets/*.yaml
 # Job task brief & screenshots dropped into the working dir — not deliverables
 *.pdf
 *.webp
+
+# Reviewer-facing implementation review — delivered separately (PDF), not in the repo
+IMPLEMENTATION_REVIEW.md

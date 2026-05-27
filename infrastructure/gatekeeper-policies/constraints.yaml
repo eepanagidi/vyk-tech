@@ -20,8 +20,11 @@ metadata:
     app.kubernetes.io/managed-by: argocd
     project: vyking-platform
 spec:
-  # Warn rather than deny in local — enforce (deny) in staging/production
-  enforcementAction: warn # Change to "deny" for staging/production
+  # Deny deletes outright — this is real protection, not just a warning.
+  # Authorized deletion uses the vyking.io/deletion-override=true annotation
+  # (see the ConstraintTemplate message); teardown.sh lifts the constraints
+  # before `terraform destroy`, and `k3d cluster delete` bypasses admission.
+  enforcementAction: deny
   match:
     kinds:
       - apiGroups: [""]
@@ -42,7 +45,7 @@ metadata:
     app.kubernetes.io/managed-by: argocd
     project: vyking-platform
 spec:
-  enforcementAction: warn
+  enforcementAction: deny
   match:
     kinds:
       - apiGroups: ["apps"]
@@ -62,7 +65,7 @@ metadata:
     app.kubernetes.io/managed-by: argocd
     project: vyking-platform
 spec:
-  enforcementAction: warn
+  enforcementAction: deny
   match:
     kinds:
       - apiGroups: [""]
@@ -82,7 +85,7 @@ metadata:
     app.kubernetes.io/managed-by: argocd
     project: vyking-platform
 spec:
-  enforcementAction: warn
+  enforcementAction: deny
   match:
     kinds:
       - apiGroups: ["argoproj.io"]

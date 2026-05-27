@@ -1,0 +1,85 @@
+# ──────────────────────────────────────────────
+# Custom Grafana dashboard: "Vyking Platform Overview"
+#
+# App-focused panels (the kube-prometheus-stack defaults already cover generic
+# cluster/node/pod CPU+RAM). Loaded by the Grafana sidecar via the
+# grafana_dashboard label. Prometheus panels use Grafana's default datasource;
+# the logs panel uses the Loki datasource (uid: loki).
+# ──────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vyking-overview-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  vyking-overview.json: |
+    {
+      "uid": "vyking-overview",
+      "title": "Vyking Platform Overview",
+      "tags": ["vyking"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "refresh": "30s",
+      "time": { "from": "now-1h", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Backend CPU (cores)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "targets": [
+            {
+              "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"applications\", pod=~\"backend-local.*\", container!=\"\"}[5m])) by (pod)",
+              "legendFormat": "{{pod}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Backend Memory (working set)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+          "targets": [
+            {
+              "expr": "sum(container_memory_working_set_bytes{namespace=\"applications\", pod=~\"backend-local.*\", container!=\"\"}) by (pod)",
+              "legendFormat": "{{pod}}"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "MySQL connected threads",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+          "targets": [
+            { "expr": "mysql_global_status_threads_connected", "legendFormat": "connections" }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Backup jobs succeeded",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
+          "targets": [
+            { "expr": "sum(kube_job_status_succeeded{namespace=\"infrastructure\"})", "legendFormat": "succeeded" }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Backend logs (Loki)",
+          "type": "logs",
+          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 16 },
+          "datasource": { "type": "loki", "uid": "loki" },
+          "options": { "showTime": true, "wrapLogMessage": true },
+          "targets": [
+            { "datasource": { "type": "loki", "uid": "loki" }, "expr": "{namespace=\"applications\", container=\"backend\"}" }
+          ]
+        }
+      ]
+    }

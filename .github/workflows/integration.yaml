@@ -18,7 +18,10 @@ jobs:
   integration:
     name: Full Stack Integration Test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Raised from 30 → 50: the observability stack (kube-prometheus-stack, Loki,
+    # Alloy, OpenCost) adds substantial image-pull + convergence time on top of
+    # the base platform and the app-wait ceiling above.
+    timeout-minutes: 50
 
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +46,19 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.8.5"
+
+      # Free ~20-30GB of preinstalled bloat the runner doesn't need (.NET, GHC,
+      # Android SDK, CodeQL, large cached Docker images). The k3d nodes share the
+      # host disk; without this the full observability image set pushes the disk
+      # past the kubelet image-GC threshold (ImageGCFailed / FreeDiskSpaceFailed),
+      # which slows image pulls and adds startup turbulence.
+      - name: Free up runner disk space
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/lib/android /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          echo "after cleanup:"; df -h / | tail -1
 
       # ── Build real images ────────────────────
       # Tag 0.1.0 to match applications/values.yaml (image.tag) so the rendered
@@ -161,27 +177,65 @@ jobs:
             --password "$ARGOCD_PASS" \
             --plaintext --grpc-web
 
-          # Wait up to 10 min for both parent apps to sync
+          # Poll until each parent app reaches Synced/Healthy (up to 20 min each).
+          #
+          # We deliberately DON'T use `argocd app wait --health`: it aborts on the
+          # first transition to Degraded. On this small CI runner the heavy
+          # observability pods (notably Prometheus, whose init-config-reloader
+          # waits on the operator) flap through Degraded/Progressing during
+          # startup, so app wait fails on a transient blip even though the stack
+          # converges seconds later. This loop tolerates transient states and only
+          # fails if the app hasn't actually settled on Synced/Healthy by the
+          # deadline. (Status is read straight from the Application CR via kubectl.)
           for app in infrastructure-local applications-local; do
-            echo "Waiting for ArgoCD app: $app"
-            argocd app wait "$app" \
-              --health \
-              --sync \
-              --timeout 600 \
-              --plaintext --grpc-web || {
-              argocd app get "$app" --plaintext --grpc-web
-              exit 1
-            }
-            echo "✓ $app synced and healthy"
+            echo "Waiting for ArgoCD app: $app (up to 20 min, tolerating transient Degraded)"
+            deadline=$((SECONDS + 1200))
+            last=""
+            while true; do
+              s=$(kubectl get application "$app" -n argocd \
+                    -o jsonpath='{.status.sync.status}/{.status.health.status}' 2>/dev/null)
+              [ "$s" = "Synced/Healthy" ] && { echo "✓ $app: $s"; break; }
+              [ "$s" != "$last" ] && echo "  $app → $s"; last="$s"
+              if [ "$SECONDS" -gt "$deadline" ]; then
+                echo "✗ $app did not converge (last: $s)"
+                argocd app get "$app" --plaintext --grpc-web || true
+                exit 1
+              fi
+              sleep 15
+            done
           done
+
+      # Runs only if a previous step failed — captures why apps didn't converge
+      # (node memory pressure, evictions, OOMKills, scheduling, crashloops).
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          echo "===== NODES (allocatable + pressure conditions) ====="
+          kubectl describe nodes | grep -EA6 '^Name:|Allocatable:|MemoryPressure|Allocated resources' || true
+          echo "===== ALL PODS (placement + status) ====="
+          kubectl get pods -A -o wide --sort-by=.spec.nodeName || true
+          echo "===== NON-RUNNING / NOT-READY PODS ====="
+          kubectl get pods -A | grep -Ev '([0-9]+)/\1 *Running|Completed' || true
+          echo "===== RECENT WARNING EVENTS (monitoring + infrastructure) ====="
+          kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp | tail -40 || true
+          echo "===== DESCRIBE non-ready pods in monitoring ====="
+          for p in $(kubectl get pods -n monitoring --no-headers 2>/dev/null | grep -Ev '([0-9]+)/\1 *Running|Completed' | awk '{print $1}'); do
+            echo "--- $p ---"; kubectl describe pod "$p" -n monitoring | grep -EA4 'State:|Last State:|Reason:|Events:' | tail -25 || true
+          done
+          echo "===== monitoring app resource tree ====="
+          argocd app get monitoring --plaintext --grpc-web 2>/dev/null || true
 
       # ── Kubernetes workload verification ──────
       - name: Verify pods are on worker nodes (taint/toleration)
         run: |
           # Intent: the app + DB *workloads* must run on the tainted worker nodes
           # (they carry the worker toleration/nodeSelector). Cluster-infra add-ons
-          # have no worker toleration and legitimately sit on the control-plane —
-          # exclude them like argocd/kube-system: ingress-nginx, gatekeeper-system.
+          # have no such pinning and legitimately sit on the control-plane — exclude
+          # them like argocd/kube-system: ingress-nginx, gatekeeper-system, and
+          # monitoring. The monitoring namespace also runs DaemonSets (node-exporter,
+          # alloy) that MUST run on every node incl. the control-plane, so 0-there is
+          # impossible by design. This check still asserts the real app (applications
+          # ns) and DB (infrastructure ns) stay off the control-plane.
           CONTROL=$(kubectl get nodes --selector=node-role.kubernetes.io/control-plane \
             -o jsonpath='{.items[0].metadata.name}')
           PODS_ON_CONTROL=$(kubectl get pods -A -o json | \
@@ -189,7 +243,8 @@ jobs:
               select(.metadata.namespace != "kube-system") |
               select(.metadata.namespace != "argocd") |
               select(.metadata.namespace != "ingress-nginx") |
-              select(.metadata.namespace != "gatekeeper-system")] | length')
+              select(.metadata.namespace != "gatekeeper-system") |
+              select(.metadata.namespace != "monitoring")] | length')
           echo "App/DB workload pods on control-plane (expect 0): $PODS_ON_CONTROL"
           [ "$PODS_ON_CONTROL" -eq 0 ] || \
             (echo "ERROR: app/DB workload pods scheduled on control-plane node" && exit 1)

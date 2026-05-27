@@ -1,0 +1,56 @@
+# ──────────────────────────────────────────────
+# Child ArgoCD Application: Loki (log store)
+#
+# Single-binary Loki, filesystem-backed on the mysql-retain StorageClass so the
+# log history survives pod restarts AND PVC deletion. Grafana queries it via the
+# Loki datasource provisioned by the monitoring app.
+#
+# project: default — the chart creates a ClusterRole. sync-wave 3: alongside the
+# metrics stack. prune: false — never auto-delete the log store.
+# ──────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: loki
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/part-of: infrastructure
+    app.kubernetes.io/component: logging
+    app.kubernetes.io/managed-by: argocd
+    environment: local
+    project: vyking-platform
+    owner: platform-team
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+    vyking.io/contains-stateful-data: "true"
+spec:
+  project: default
+  sources:
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: loki
+      targetRevision: "6.34.0"
+      helm:
+        valueFiles:
+          - $values/infrastructure/monitoring/loki-values.yaml
+    - repoURL: https://github.com/eepanagidi/vyk-tech.git
+      targetRevision: feat/observability
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: false # never auto-delete the log store
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

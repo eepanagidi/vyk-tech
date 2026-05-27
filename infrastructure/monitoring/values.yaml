@@ -1,0 +1,127 @@
+# ──────────────────────────────────────────────
+# kube-prometheus-stack values — tuned for local k3d
+#
+# Conservative resource requests (the cluster is small) and k3s-specific tweaks
+# (k3s runs control-plane components in-process, so their default ServiceMonitors
+# would be permanently DOWN — disabled below).
+# ──────────────────────────────────────────────
+fullnameOverride: kps
+
+# Alertmanager off in this first slice — not needed for metrics/dashboards and
+# saves resources. (A "backup hasn't succeeded" alert is a documented follow-up.)
+alertmanager:
+  enabled: false
+
+# k3s/k3d serve these in-process; their standard scrape targets don't exist, so
+# disable the ServiceMonitors to avoid permanently-down targets.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+prometheusOperator:
+  # Tolerate the worker taint so the monitoring workloads spread off the single
+  # untainted control-plane node. Without this they ALL pile onto the server
+  # node (alongside k3s control plane + ArgoCD + Gatekeeper); on a small CI
+  # runner that node hits memory-pressure eviction → the app goes Degraded.
+  tolerations:
+    - operator: Exists
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 200m, memory: 256Mi }
+
+prometheus:
+  prometheusSpec:
+    retention: 24h
+    retentionSize: "4GB"
+    # Discover ServiceMonitors/PodMonitors/Rules from ALL namespaces (not just
+    # those carrying this release's Helm labels) — needed to pick up the MySQL
+    # exporter's ServiceMonitor in the `infrastructure` namespace.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    resources:
+      requests: { cpu: 150m, memory: 512Mi }
+      limits: { cpu: 750m, memory: 1Gi }
+    # Spread onto the worker nodes (tolerate the worker taint) — see operator note.
+    tolerations:
+      - operator: Exists
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          # Default local-path SC — metrics are transient, Delete reclaim is fine.
+          resources:
+            requests:
+              storage: 5Gi
+
+  # MySQL exporter ServiceMonitor lives HERE, not in the mysql chart, so it ships
+  # in the same app as its CRD (kube-prometheus-stack installs the ServiceMonitor
+  # CRD). The mysql app is sync-wave 0 but this CRD only exists at wave 3, so
+  # defining the monitor in the mysql chart deadlocked the deploy (mysql can't go
+  # Healthy without the CRD; the CRD's app is gated behind mysql). It selects the
+  # mysql-metrics Service in the infrastructure namespace.
+  additionalServiceMonitors:
+    - name: mysql
+      namespaceSelector:
+        matchNames: ["infrastructure"]
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: mysql
+          app.kubernetes.io/instance: mysql
+          app.kubernetes.io/component: metrics
+      endpoints:
+        - port: metrics
+          interval: 30s
+
+grafana:
+  enabled: true
+  # The chart generates a random admin password in the `kps-grafana` Secret:
+  #   kubectl -n monitoring get secret kps-grafana -o jsonpath='{.data.admin-password}' | base64 -d
+  defaultDashboardsEnabled: true # node / cluster / namespace / pod CPU + memory dashboards
+  resources:
+    # Idle Grafana sits ~200Mi; loading the default dashboards + running Loki/
+    # Prometheus queries spikes past 256Mi → OOMKilled (exit 137) and the pod
+    # crashloops. 512Mi gives the working headroom.
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { cpu: 250m, memory: 512Mi }
+  # Spread onto the worker nodes (tolerate the worker taint) — see operator note.
+  tolerations:
+    - operator: Exists
+  service:
+    type: ClusterIP
+  # Make logs explorable in Grafana alongside metrics.
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      uid: loki
+      url: http://loki.monitoring.svc.cluster.local:3100
+      access: proxy
+  sidecar:
+    dashboards:
+      enabled: true # auto-load ConfigMaps labeled grafana_dashboard (our custom app dashboard)
+      searchNamespace: ALL
+    datasources:
+      enabled: true # auto-load datasource ConfigMaps labeled grafana_datasource (Loki, added later)
+
+kube-state-metrics:
+  # Spread onto the worker nodes (tolerate the worker taint) — see operator note.
+  tolerations:
+    - operator: Exists
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { cpu: 100m, memory: 128Mi }
+
+# node-exporter is a DaemonSet — it must run on the tainted worker nodes too, so
+# tolerate everything (standard for node-level exporters).
+prometheus-node-exporter:
+  tolerations:
+    - operator: Exists
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { cpu: 100m, memory: 64Mi }
