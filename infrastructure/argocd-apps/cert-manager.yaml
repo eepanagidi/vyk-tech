@@ -29,7 +29,11 @@ spec:
   sources:
     - repoURL: https://charts.jetstack.io
       chart: cert-manager
-      targetRevision: "v1.20.2"
+      # v1.18.2 supports k8s 1.29 (the cluster's k3s version). Newer cert-manager
+      # (v1.20.x) ships CRDs using `selectableFields`, a k8s 1.31+ feature the 1.29
+      # API server doesn't know — which breaks ServerSideApply ("field not declared
+      # in schema"). Match cert-manager to the cluster's Kubernetes version.
+      targetRevision: "v1.18.2"
       helm:
         valueFiles:
           - $values/infrastructure/cert-manager/values.yaml
