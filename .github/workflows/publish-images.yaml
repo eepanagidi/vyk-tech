@@ -1,0 +1,68 @@
+# ──────────────────────────────────────────────
+# Publish container images to GitHub Container Registry (GHCR)
+#
+# This is an ADDITIVE artifact-publishing pipeline. It does NOT change how the
+# platform runs: the k3d cluster (locally and in the integration test) still uses
+# images built and loaded with `k3d image import`, and the Deployments still
+# reference the bare local tags (see applications/values.yaml). This workflow
+# simply also publishes the same images to GHCR so they are available as proper
+# registry artifacts.
+#
+# To actually DEPLOY from the registry (pull-based) you would additionally point
+# the Deployments at ghcr.io/<owner>/vyking-<svc>:<tag> and add an imagePullSecret
+# for private packages. That is intentionally NOT done here (it is a documented
+# improvement, see README "Container Images") to keep the local/offline flow and
+# the integration test independent of any registry.
+#
+# Published images (lowercased by docker/metadata-action):
+#   ghcr.io/<owner>/vyking-backend
+#   ghcr.io/<owner>/vyking-frontend
+# Tags: sha-<short-sha> and `latest` on master; the version on a vX.Y.Z git tag.
+# Auth uses the built-in GITHUB_TOKEN (no extra secret); needs packages: write.
+# ──────────────────────────────────────────────
+name: Publish Images
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*.*.*"]
+  workflow_dispatch: # allow manual publishing
+
+permissions:
+  contents: read
+  packages: write # required to push to GHCR
+
+jobs:
+  publish:
+    name: Build & push vyking-${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [backend, frontend] # builds ./backend and ./frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image name + tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/vyking-${{ matrix.image }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.image }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

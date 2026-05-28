@@ -369,6 +369,44 @@ kubectl delete pvc mysql-backup-storage -n infrastructure
 
 ---
 
+## Container Images
+
+Two complementary paths, by design:
+
+**Local + integration test — build and import, no registry.**
+`scripts/build-images.sh` builds `vyking-backend:0.1.0` and `vyking-frontend:0.1.0`
+and loads them straight into the k3d cluster with `k3d image import`. The Deployments
+reference the bare local tags with `pullPolicy: IfNotPresent`, so the platform runs
+offline on one machine with no registry, credentials, or network dependency. (This is
+why skipping `build-images.sh` causes `ImagePullBackOff` — there is no registry to
+fall back to.)
+
+**CI publish to GHCR — registry artifacts.**
+The `Publish Images` workflow (`.github/workflows/publish-images.yaml`) also builds and
+pushes the images to GitHub Container Registry, on every push to `master` and on
+`vX.Y.Z` git tags:
+
+| Image | Tags |
+|---|---|
+| `ghcr.io/eepanagidi/vyking-backend` | `sha-<short-sha>`, `latest` (on master), `X.Y.Z` (on a version tag) |
+| `ghcr.io/eepanagidi/vyking-frontend` | `sha-<short-sha>`, `latest` (on master), `X.Y.Z` (on a version tag) |
+
+It authenticates with the built-in `GITHUB_TOKEN` (the workflow grants
+`packages: write`); no extra secret is required. This is **additive**: it does not
+change how the cluster runs (the integration test still imports locally), it only makes
+the images available as registry artifacts. Published packages appear under the repo's
+Packages tab; set their visibility (public/private) there.
+
+**Deploying pull-based — production direction, not enabled here.**
+To make the cluster pull from GHCR instead of using imported images you would:
+point `applications/values.yaml` `image.repository` at `ghcr.io/eepanagidi/vyking-<svc>`;
+pick a tag strategy (immutable `sha-...`/`X.Y.Z` with a GitOps tag bump or ArgoCD Image
+Updater, or a mutable tag with `pullPolicy: Always` plus a rollout trigger); and add an
+`imagePullSecret` for private packages. This is deliberately left as a documented
+improvement so the local/offline flow and the integration test stay registry-free.
+
+---
+
 ## Design Decisions
 
 | Decision | Rationale |
