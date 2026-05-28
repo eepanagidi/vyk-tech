@@ -222,13 +222,30 @@ jobs:
           [ "$PODS_ON_CONTROL" -eq 0 ] || \
             (echo "ERROR: app/DB workload pods scheduled on control-plane node" && exit 1)
 
+      # The full stack stresses the small runner's k3s API server; before the
+      # verification steps, wait until it's consistently responsive so they don't
+      # hit transient "connection lost" / "TLS handshake timeout".
+      - name: Wait for API server to stabilize
+        run: |
+          ok=0
+          for i in $(seq 1 40); do
+            if kubectl get --raw='/readyz' >/dev/null 2>&1; then
+              ok=$((ok + 1)); [ "$ok" -ge 6 ] && echo "API server stable" && exit 0
+            else ok=0; echo "  API not ready (attempt $i), retrying..."; fi
+            sleep 3
+          done
+          echo "API server did not stabilize in time"; exit 1
+
       - name: Verify deployments are running
         run: |
+          # `rollout status` opens a watch (http2 stream) that the loaded API server
+          # can drop ("connection lost"); retry through transient connection errors.
+          retry() { for n in 1 2 3 4 5; do "$@" && return 0; echo "  retry $n/5: $*"; sleep 6; done; return 1; }
           for deploy in frontend-local backend-local; do
-            kubectl rollout status deployment/$deploy -n applications --timeout=120s
+            retry kubectl rollout status deployment/$deploy -n applications --timeout=120s
             echo "✓ $deploy deployment ready"
           done
-          kubectl rollout status statefulset/mysql -n infrastructure --timeout=180s
+          retry kubectl rollout status statefulset/mysql -n infrastructure --timeout=180s
           echo "✓ mysql statefulset ready"
 
       - name: Verify probes are configured on all containers
@@ -360,10 +377,12 @@ jobs:
           # /api proxy, not a separate ingress (backend stays internal).
           echo "127.0.0.1 vyking.local" | sudo tee -a /etc/hosts
 
-          kubectl rollout status deployment/ingress-nginx-controller \
+          # rollout status / wait open watches the loaded API server can drop; retry.
+          retry() { for n in 1 2 3 4 5; do "$@" && return 0; echo "  retry $n/5: $*"; sleep 6; done; return 1; }
+          retry kubectl rollout status deployment/ingress-nginx-controller \
             -n ingress-nginx --timeout=120s
           # cert-manager issues the frontend TLS cert — wait for it before HTTPS.
-          kubectl wait --for=condition=Ready certificate/frontend-tls \
+          retry kubectl wait --for=condition=Ready certificate/frontend-tls \
             -n applications --timeout=120s
           sleep 5
 
@@ -394,17 +413,19 @@ jobs:
       - name: Print test summary
         if: always()
         run: |
+          # Informational only — never fail the job if the API server is briefly
+          # unreachable here (|| true).
           echo ""
           echo "══════════════════════════════════════════"
           echo " Cluster State Summary"
           echo "══════════════════════════════════════════"
-          kubectl get nodes -o wide
+          kubectl get nodes -o wide || true
           echo ""
-          kubectl get pods -A --field-selector=status.phase!=Succeeded
+          kubectl get pods -A --field-selector=status.phase!=Succeeded || true
           echo ""
-          kubectl get ingress -A
+          kubectl get ingress -A || true
           echo ""
-          kubectl get pvc -A
+          kubectl get pvc -A || true
 
       - name: Cleanup k3d cluster
         if: always()
